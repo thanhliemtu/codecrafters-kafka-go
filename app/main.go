@@ -76,14 +76,19 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 						client_id => NULLABLE_STRING
 				*/
 				// request_api_key := int16(binary.BigEndian.Uint16(data[0:2]))
-				// request_api_version := int16(binary.BigEndian.Uint16(data[2:4]))
+				request_api_version := int16(binary.BigEndian.Uint16(data[2:4]))
 				correlation_id := int32(binary.BigEndian.Uint32(data[4:8]))
 
 				// Assembling the response
 				response := make([]byte, 10)
+
+				var error_code uint16 = 0
+				if request_api_version < 0 && request_api_version > 4 {
+					error_code = 35
+				}
 				binary.BigEndian.PutUint32(response[0:4], 0)
 				binary.BigEndian.PutUint32(response[4:8], uint32(correlation_id))
-				binary.BigEndian.PutUint16(response[8:10], 35)
+				binary.BigEndian.PutUint16(response[8:10], error_code)
 
 				conn.Write(response)
 			}
