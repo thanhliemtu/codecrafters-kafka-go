@@ -68,6 +68,19 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			return
 		case data := <-msgChan:
 			log.Printf("% x\n", data)
+			if len(data) >= 12 {
+
+				correlationID := int32(binary.BigEndian.Uint32(data[8:12]))
+
+				response := make([]byte, 8)
+
+				binary.BigEndian.PutUint32(response[0:4], 0)
+
+				binary.BigEndian.PutUint32(response[4:8], uint32(correlationID))
+
+				conn.Write(response)
+
+			}
 			return // this currently kills the connection after 1 message frame
 		}
 	}
