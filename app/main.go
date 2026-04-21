@@ -66,18 +66,26 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			return
 		case data := <-msgChan:
 			log.Printf("% x\n", data)
-			if len(data) >= 12 {
+			if len(data) >= 8 {
+				/*
+					Parsing Request Header v2
+					Request Header v2 => request_api_key request_api_version correlation_id client_id
+						request_api_key => INT16 (byte 0 1)
+						request_api_version => INT16 (byte 2 3)
+						correlation_id => INT32 (byte 4 5 6 7)
+						client_id => NULLABLE_STRING
+				*/
+				// request_api_key := int16(binary.BigEndian.Uint16(data[0:2]))
+				// request_api_version := int16(binary.BigEndian.Uint16(data[2:4]))
+				correlation_id := int32(binary.BigEndian.Uint32(data[4:8]))
 
-				correlationID := int32(binary.BigEndian.Uint32(data[4:8]))
-
-				response := make([]byte, 8)
-
+				// Assembling the response
+				response := make([]byte, 10)
 				binary.BigEndian.PutUint32(response[0:4], 0)
-
-				binary.BigEndian.PutUint32(response[4:8], uint32(correlationID))
+				binary.BigEndian.PutUint32(response[4:8], uint32(correlation_id))
+				binary.BigEndian.PutUint16(response[8:10], 35)
 
 				conn.Write(response)
-
 			}
 			return // this currently kills the connection after 1 message frame
 		}
