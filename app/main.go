@@ -46,12 +46,10 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 					errChan <- fmt.Errorf("failed reading payload: %w", err)
 					return
 				}
-
-				// The whole frame (size + the rest)
-				fullPacket := append(sizeBuf, payloadBuf...)
+				// payload now contains the message frame
 
 				select { // select here because sending to channel might block forever if parent exits first
-				case msgChan <- fullPacket:
+				case msgChan <- payloadBuf:
 				case <-ctx.Done():
 					return
 				}
@@ -70,7 +68,7 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			log.Printf("% x\n", data)
 			if len(data) >= 12 {
 
-				correlationID := int32(binary.BigEndian.Uint32(data[8:12]))
+				correlationID := int32(binary.BigEndian.Uint32(data[4:8]))
 
 				response := make([]byte, 8)
 

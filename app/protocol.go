@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 )
+
+type Serializable interface {
+	Serialize() ([]byte, error)
+}
 
 type Message struct { // all ints are in big endian
 	MessageSize int32 // message size of 2 looks like 00 00 00 02
@@ -13,7 +16,7 @@ type Message struct { // all ints are in big endian
 }
 
 // Marshal converts the Message struct into a Big Endian byte slice
-func (m *Message) Marshal() ([]byte, error) {
+func (m *Message) Serialize() ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	// Message size
@@ -29,18 +32,6 @@ func (m *Message) Marshal() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-func (m *Message) PrintPreview() {
-	data, err := m.Marshal()
-	if err != nil {
-		log.Printf("Error encoding message: %v\n", err)
-		return
-	}
-	log.Println("--- Message Preview ---")
-	log.Printf("Struct Fields: %+v\n", m)
-	log.Printf("Network Hex:   [% x]\n", data)
-	log.Println("-----------------------")
 }
 
 func NewMessageFromBytes(data []byte) (Message, error) {
