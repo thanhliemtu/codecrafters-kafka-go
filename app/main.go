@@ -75,20 +75,47 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 						correlation_id => INT32 (byte 4 5 6 7)
 						client_id => NULLABLE_STRING
 				*/
-				// request_api_key := int16(binary.BigEndian.Uint16(data[0:2]))
+				request_api_key := int16(binary.BigEndian.Uint16(data[0:2]))
 				request_api_version := int16(binary.BigEndian.Uint16(data[2:4]))
 				correlation_id := int32(binary.BigEndian.Uint32(data[4:8]))
 
-				// Assembling the response
-				response := make([]byte, 10)
+				/*
+					Assembling the response
+					00 00 00 13  // message_size:      19 bytes
+					ab cd ef 12  // correlation_id:    (matches request)
+					00 00        // error_code:        0 (no error)
+					02           // api_keys array length:    1 element
+					00 12        // api_key:           18 (ApiVersions)
+					00 00        // min_version:       0
+					00 04        // max_version:       4
+					00           // TAG_BUFFER:        empty
+					00 00 00 00  // throttle_time_ms:  0
+					00           // TAG_BUFFER:        empty
+				*/
+				const MIN_VERSION = 0
+				const MAX_VERSION = 4
 
-				var error_code uint16 = 0
-				if request_api_version < 0 && request_api_version > 4 {
-					error_code = 35
+				const ERROR_NONE = 0
+				const ERROR_UNSUPPORTED_VERSION = 35
+
+				var error_code uint16 = ERROR_NONE
+				if request_api_version < MIN_VERSION || request_api_version > MAX_VERSION {
+					error_code = ERROR_UNSUPPORTED_VERSION
 				}
-				binary.BigEndian.PutUint32(response[0:4], 0)
-				binary.BigEndian.PutUint32(response[4:8], uint32(correlation_id))
-				binary.BigEndian.PutUint16(response[8:10], error_code)
+
+				body := []byte{}
+				body = binary.BigEndian.AppendUint32(body, uint32(correlation_id))  // correlation_id (4 bytes)
+				body = binary.BigEndian.AppendUint16(body, uint16(error_code))      // error_code (2 bytes)
+				body = append(body, 2)                                              // api_keys array length (1 byte)
+				body = binary.BigEndian.AppendUint16(body, uint16(request_api_key)) // api_key (2 bytes)
+				body = binary.BigEndian.AppendUint16(body, uint16(MIN_VERSION))     // min_version (2 bytes)
+				body = binary.BigEndian.AppendUint16(body, uint16(MAX_VERSION))     // max_version (2 bytes)
+				body = append(body, 0)                                              // TAG_BUFFER (1 byte)
+				body = binary.BigEndian.AppendUint32(body, uint32(0))               // throttle_time_ms (4 bytes)
+				body = append(body, 0)                                              // TAG_BUFFER (1 byte)
+
+				response := binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+				response = append(response, body...)
 
 				conn.Write(response)
 			}
