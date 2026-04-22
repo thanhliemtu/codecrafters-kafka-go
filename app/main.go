@@ -119,7 +119,6 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 
 				conn.Write(response)
 			}
-			return // this currently kills the connection after 1 message frame
 		}
 	}
 }
