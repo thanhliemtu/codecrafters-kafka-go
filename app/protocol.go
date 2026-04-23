@@ -232,14 +232,14 @@ func handleDescribeTopicPartitions(frame Frame, header RequestHeaderV2) (respons
 
 	body = append(body, 2) // topics array length: 1 element (1 byte)
 
-	body = binary.BigEndian.AppendUint16(body, uint16(error_code))           // error_code: 3 (2 bytes)
-	body = binary.AppendUvarint(body, uint64(len(topic)+1))                  // name length: 3 (compact string) (1 byte)
-	body = append(body, topic...)                                            // topic_name: "foo" (3 bytes)
-	body = append(body, "0000000000000000"...)                               // topic_id: 0000000000000000 (16 bytes)
-	body = append(body, 0)                                                   // is_internal: false (1 byte)
-	body = append(body, 1)                                                   // partitions array: 0 element (1 byte)
-	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // topic_authorized_operations:  0 (4 bytes)
-	body = append(body, 0)                                                   // TAG_BUFFER (1 byte)
+	body = binary.BigEndian.AppendUint16(body, uint16(error_code)) // error_code: 3 (2 bytes)
+	body = binary.AppendUvarint(body, uint64(len(topic)+1))        // name length: 3 (compact string) (1 byte)
+	body = append(body, topic...)                                  // topic_name: "foo" (3 bytes)
+	body = append(body, make([]byte, 16)...)                       // topic_id: 0000000000000000 (16 bytes)
+	body = append(body, 0)                                         // is_internal: false (1 byte)
+	body = append(body, 1)                                         // partitions array: 0 element (1 byte)
+	body = binary.BigEndian.AppendUint32(body, uint32(0))          // topic_authorized_operations:  0 (4 bytes)
+	body = append(body, 0)                                         // TAG_BUFFER (1 byte)
 
 	// Structs can be null
 	body = append(body, 0xff) // // next_cursor: -1 (null) (1 byte)
