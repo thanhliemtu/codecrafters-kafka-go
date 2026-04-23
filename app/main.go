@@ -108,6 +108,7 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 
 		case frame, ok := <-msgChan:
 			if !ok {
+				log.Printf("message channel closed")
 				return
 			}
 
@@ -116,36 +117,17 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			/*
-				Parsing Request Header v2
-				Request Header v2 => request_api_key request_api_version correlation_id client_id
-					request_api_key => INT16 (byte 0 1)
-					request_api_version => INT16 (byte 2 3)
-					correlation_id => INT32 (byte 4 5 6 7)
-					client_id => NULLABLE_STRING
-			*/
-			request_api_key, err := frame.ReadInt16()
+			// parsing header
+			header, err := frame.ReadRequestHeaderV2()
 			if err != nil {
-				log.Printf("failed to read api key: %v", err)
-				return
-			}
-
-			request_api_version, err := frame.ReadInt16()
-			if err != nil {
-				log.Printf("failed to read api version: %v", err)
-				return
-			}
-
-			correlation_id, err := frame.ReadInt32()
-			if err != nil {
-				log.Printf("failed to read correlation id: %v", err)
+				log.Printf("failed to read request header v2: %v", err)
 				return
 			}
 
 			var response []byte
-			switch request_api_key {
+			switch header.RequestAPIKey {
 			case 18:
-				response = createApiVersionsResponse(request_api_version, correlation_id)
+				response = createApiVersionsResponse(frame, header)
 			default:
 				return // dont know what to do if it's not a known api key so we just return here
 			}

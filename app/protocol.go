@@ -2,68 +2,27 @@ package main
 
 import (
 	"encoding/binary"
-	"errors"
 )
 
-type Frame struct {
-	buf []byte
-	pos int
+type RequestHeaderV2 struct {
+	RequestAPIKey     int16
+	RequestAPIVersion int16
+	CorrelationID     int32
+	ClientID          *string
 }
 
-func NewFrame(data []byte) Frame {
-	return Frame{
-		buf: data,
-		pos: 0,
-	}
-}
-
-func (f *Frame) Remaining() int {
-	return len(f.buf) - f.pos
-}
-
-// Read a single byte from the frame and advances the current postion by 1
-// Also checks for OOB and returns an error
-func (f *Frame) ReadByte() (byte, error) {
-	if f.Remaining() < 1 {
-		return 0, errors.New("out of bound")
-	}
-	b := f.buf[f.pos]
-	f.pos++
-	return b, nil
-}
-
-// Read n bytes from the frame and advances the current postion by n
-// Also checks for OOB and returns an error
-func (f *Frame) ReadBytes(n int) ([]byte, error) {
-	if n < 0 || f.Remaining() < n {
-		return nil, errors.New("out of bounds")
-	}
-	out := f.buf[f.pos : f.pos+n]
-	f.pos += n
-	return out, nil
-}
-
-func (f *Frame) ReadInt16() (int16, error) {
-	if f.Remaining() < 2 {
-		return 0, errors.New("out of bounds")
-	}
-	v := int16(binary.BigEndian.Uint16(f.buf[f.pos : f.pos+2]))
-	f.pos += 2
-	return v, nil
-}
-
-func (f *Frame) ReadInt32() (int32, error) {
-	if f.Remaining() < 4 {
-		return 0, errors.New("out of bounds")
-	}
-	v := int32(binary.BigEndian.Uint32(f.buf[f.pos : f.pos+4]))
-	f.pos += 4
-	return v, nil
-}
-
-func createApiVersionsResponse(request_api_version int16, correlation_id int32) (response []byte) {
-	// Seems like there's no request body, just the header. So we're just gonna build the response.
+func createApiVersionsResponse(frame Frame, header RequestHeaderV2) (response []byte) {
 	// https://kafka.apache.org/42/design/protocol/#The_Messages_ApiVersions
+
+	/*
+		ApiVersions Request (Version: 4) => client_software_name client_software_version
+		client_software_name => COMPACT_STRING
+		client_software_version => COMPACT_STRING
+	*/
+	// For now we don't seem to need the request body so we will skip to assembling the response.
+	// client_software_name, err := frame.ReadCompactString()
+	// client_software_version, err := frame.ReadCompactString()
+
 	/*
 		Simple example response:
 		00 00 00 13  // message_size:      19 bytes
@@ -132,13 +91,13 @@ func createApiVersionsResponse(request_api_version int16, correlation_id int32) 
 	const ERROR_UNSUPPORTED_VERSION = 35
 
 	var error_code uint16 = ERROR_NONE
-	if request_api_version < ApiVersions_MIN_VERSION || request_api_version > ApiVersions_MAX_VERSION {
+	if header.RequestAPIVersion < ApiVersions_MIN_VERSION || header.RequestAPIVersion > ApiVersions_MAX_VERSION {
 		error_code = ERROR_UNSUPPORTED_VERSION
 	}
 
 	body := []byte{}
-	body = binary.BigEndian.AppendUint32(body, uint32(correlation_id)) // correlation_id (4 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(error_code))     // error_code (2 bytes)
+	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
+	body = binary.BigEndian.AppendUint16(body, uint16(error_code))           // error_code (2 bytes)
 
 	// This field is the length of the [api_keys] array.
 	// Since we're working with version 4, a flexible version, this follows the N+1 syntax
