@@ -234,7 +234,7 @@ func handleDescribeTopicPartitions(frame Frame, header RequestHeaderV2) (respons
 
 	body = binary.BigEndian.AppendUint16(body, uint16(error_code))           // error_code: 3 (2 bytes)
 	body = append(body, 4)                                                   // name length: 3 (compact string) (1 byte)
-	body = append(body, "foo"...)                                            // topic_name: "foo" (3 bytes)
+	body = append(body, topic...)                                            // topic_name: "foo" (3 bytes)
 	body = append(body, "0000000000000000"...)                               // topic_id: 0000000000000000 (16 bytes)
 	body = append(body, 0)                                                   // is_internal: false (1 byte)
 	body = append(body, 1)                                                   // partitions array: 0 element (1 byte)
