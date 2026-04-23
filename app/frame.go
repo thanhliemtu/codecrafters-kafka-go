@@ -181,6 +181,10 @@ request_api_key => INT16 (byte 0 1)
 request_api_version => INT16 (byte 2 3)
 correlation_id => INT32 (byte 4 5 6 7)
 client_id => NULLABLE_STRING
+
+This function is guaranteed to consume all the bytes related to the header version 2.
+For now, the last byte (TAG BUFFER) is being read using ReadByte, but we might have to use
+ReadUvarint later and part the tagged fields.
 */
 func (f *Frame) ReadRequestHeaderV2() (RequestHeaderV2, error) {
 	apiKey, err := f.ReadInt16()

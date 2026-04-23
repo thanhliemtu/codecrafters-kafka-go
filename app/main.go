@@ -125,11 +125,19 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			}
 
 			var response []byte
+			var handleErr error
 			switch header.RequestAPIKey {
 			case 18:
-				response = createApiVersionsResponse(frame, header)
+				response, handleErr = handleApiVersions(frame, header)
+			case 75:
+				response, handleErr = handleDescribeTopicPartitions(frame, header)
 			default:
 				return // dont know what to do if it's not a known api key so we just return here
+			}
+
+			if handleErr != nil {
+				log.Printf("failed handling request: %v", handleErr)
+				return
 			}
 
 			if _, err := conn.Write(response); err != nil {
