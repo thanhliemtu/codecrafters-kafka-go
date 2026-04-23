@@ -228,7 +228,7 @@ func handleDescribeTopicPartitions(frame Frame, header RequestHeaderV2) (respons
 	body = append(body, 0)                                                   // TAG_BUFFER (1 byte)
 
 	// Body
-	// partitions array // throttle_time_ms (4 bytes)
+	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
 	body = append(body, 2) // topics array length: 1 element (1 byte)
 
