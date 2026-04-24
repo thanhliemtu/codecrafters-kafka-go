@@ -114,6 +114,48 @@ func (f *Frame) ReadUvarint() (uint64, error) {
 	return 0, ErrUvarintTooLarge
 }
 
+// See more: https://protobuf.dev/programming-guides/encoding/#varints
+// Kafka signed VARINT uses zig-zag encoding.
+// Used by Record.length, timestampDelta, offsetDelta, keyLength, valueLength, headersCount.
+func (f *Frame) ReadVarint() (int64, error) {
+	u, err := f.ReadUvarint()
+	if err != nil {
+		return 0, err
+	}
+
+	// Zig-zag decode:
+	// 0 -> 0
+	// 1 -> -1
+	// 2 -> 1
+	// 3 -> -2
+	return int64(u>>1) ^ -int64(u&1), nil
+}
+
+func (f *Frame) SkipTaggedFields() error {
+	numTags, err := f.ReadUvarint()
+	if err != nil {
+		return fmt.Errorf("read tagged fields count: %w", err)
+	}
+
+	for range numTags {
+		_, err := f.ReadUvarint() // tag id
+		if err != nil {
+			return fmt.Errorf("read tag id: %w", err)
+		}
+
+		size, err := f.ReadUvarint()
+		if err != nil {
+			return fmt.Errorf("read tag size: %w", err)
+		}
+
+		if err := f.Skip(int(size)); err != nil {
+			return fmt.Errorf("skip tag payload: size=%d: %w", size, err)
+		}
+	}
+
+	return nil
+}
+
 func (f *Frame) ReadUUID() ([16]byte, error) {
 	var id [16]byte
 

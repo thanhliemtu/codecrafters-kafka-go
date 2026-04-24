@@ -1,5 +1,10 @@
 package main
 
+import (
+	"fmt"
+	"os"
+)
+
 type RecordBatch struct {
 	baseOffset           int64
 	batchLength          int32
@@ -53,7 +58,44 @@ type RecordHeader struct {
 	value             []byte
 }
 
-func parseClusterMetadataLog(f *Frame) {
+func parseClusterMetadataLog(path string) ([]*RecordBatch, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read cluster metadata log: %w", err)
+	}
+
+	file := NewFrame(data)
+
+	var recordBatches []*RecordBatch
+	for file.Remaining() > 0 {
+		recordBatch := &RecordBatch{}
+
+		recordBatch.baseOffset, err = file.ReadInt64()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading baseOffset: %v", err)
+		}
+
+		recordBatch.batchLength, err = file.ReadInt32()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading batchLength: %v", err)
+		}
+
+		recordBatch.partitionLeaderEpoch, err = file.ReadInt32()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading partitionLeaderEpoch: %v", err)
+		}
+
+		recordBatch.magic, err = file.ReadInt8()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading magic: %v", err)
+		}
+		if recordBatch.magic != 2 {
+
+		}
+
+		recordBatches = append(recordBatches, recordBatch)
+	}
+
 	// TODO!
 	/*
 		Kafka stores metadata about topics in the __cluster_metadata topic.
@@ -159,6 +201,7 @@ func parseClusterMetadataLog(f *Frame) {
 		We will need parse this file and extract the following:
 			Topic names and their UUIDs
 			Partition IDs for each topic
-
 	*/
+
+	return recordBatches, nil
 }
