@@ -129,9 +129,9 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			var handleErr error
 			switch header.RequestAPIKey {
 			case 18:
-				response, handleErr = handleApiVersions(frame, header)
+				response, handleErr = handleApiVersions(&frame, &header)
 			case 75:
-				response, handleErr = handleDescribeTopicPartitions(frame, header)
+				response, handleErr = handleDescribeTopicPartitions(&frame, &header)
 			default:
 				return // dont know what to do if it's not a known api key so we just return here
 			}
