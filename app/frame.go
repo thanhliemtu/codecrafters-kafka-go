@@ -40,6 +40,11 @@ func (f *Frame) ReadByte() (byte, error) {
 	return b, nil
 }
 
+func (f *Frame) Skip(n int) error {
+	_, err := f.ReadBytes(n)
+	return err
+}
+
 // Read n bytes from the frame and advances the current postion by n
 // Also checks for OOB and returns an error
 func (f *Frame) ReadBytes(n int) ([]byte, error) {
@@ -49,6 +54,14 @@ func (f *Frame) ReadBytes(n int) ([]byte, error) {
 	out := f.buf[f.pos : f.pos+n]
 	f.pos += n
 	return out, nil
+}
+
+func (f *Frame) ReadInt8() (int8, error) {
+	b, err := f.ReadByte()
+	if err != nil {
+		return 0, err
+	}
+	return int8(b), nil
 }
 
 func (f *Frame) ReadInt16() (int16, error) {
@@ -78,6 +91,7 @@ func (f *Frame) ReadInt64() (int64, error) {
 	return v, nil
 }
 
+// See more: https://protobuf.dev/programming-guides/encoding/#varints
 func (f *Frame) ReadUvarint() (uint64, error) {
 	var result uint64
 	var shift uint
@@ -98,6 +112,18 @@ func (f *Frame) ReadUvarint() (uint64, error) {
 	}
 
 	return 0, ErrUvarintTooLarge
+}
+
+func (f *Frame) ReadUUID() ([16]byte, error) {
+	var id [16]byte
+
+	b, err := f.ReadBytes(16)
+	if err != nil {
+		return id, fmt.Errorf("read uuid: %w", err)
+	}
+
+	copy(id[:], b)
+	return id, nil
 }
 
 /*

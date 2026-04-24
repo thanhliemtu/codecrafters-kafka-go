@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -148,7 +149,34 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
+func dumpClusterMetadataLog() {
+	path := "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %v\n", err)
+		return
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	fmt.Fprintln(os.Stderr, "----- BEGIN __cluster_metadata LOG BASE64 -----")
+
+	// Print in chunks so terminals/log viewers don't hate one giant line.
+	const width = 76
+	for i := 0; i < len(encoded); i += width {
+		end := i + width
+		if end > len(encoded) {
+			end = len(encoded)
+		}
+		fmt.Fprintln(os.Stderr, encoded[i:end])
+	}
+
+	fmt.Fprintln(os.Stderr, "----- END __cluster_metadata LOG BASE64 -----")
+}
+
 func main() {
+	dumpClusterMetadataLog()
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	log.Println("Logs from your program will appear here!")
 
