@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
 
+// a slice or a []byte field inside a struct is just a header (24 bytes: pointer, length, capacity).
 type RecordBatch struct {
 	baseOffset           int64
 	batchLength          int32
@@ -31,23 +33,18 @@ type RecordBatch struct {
 	producerId      int64
 	producerEpoch   int16
 	baseSequence    int32
-	recordsCount    int32
 	records         []Record
 }
 
 type Record struct {
-	length     int32
 	attributes int8
 	/*
 		bit 0~7: unused
 	*/
 	timestampDelta int64
 	offsetDelta    int32
-	keyLength      int32
 	key            []byte
-	valueLength    int32
-	value          []byte
-	headersCount   int32
+	value          []byte // [header[data_frame_version api_key version] message]
 	headers        []RecordHeader
 }
 
@@ -58,7 +55,194 @@ type RecordHeader struct {
 	value             []byte
 }
 
-func parseClusterMetadataLog(path string) ([]*RecordBatch, error) {
+// This is the header of the Record.value field
+type RecordValueHeader struct {
+	FrameVersion  int16
+	RecordType    int16
+	RecordVersion int16
+}
+
+/*
+00000000000000000000.log
+└── RecordBatch
+    ├── baseOffset
+    ├── batchLength
+    ├── partitionLeaderEpoch
+    ├── magic
+    ├── crc
+    ├── attributes
+    ├── ...
+    └── records
+        └── Record
+            ├── length
+            ├── attributes
+            ├── timestampDelta
+            ├── offsetDelta
+            ├── keyLength
+            ├── key
+            ├── valueLen
+            ├── value
+            └── headers
+*/
+
+/*
+Kafka stores metadata about topics in the __cluster_metadata topic.
+This is an internal topic that contains records about topic creation,
+partition assignments, and other cluster configuration.
+To check if a topic exists and get its metadata,
+you'll need to read the cluster metadata log file.
+
+The log file is located at:
+/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log
+
+The log file contains Record Batches.
+The documentation for the on-disk format of the RecordBatch and Record structs is here:
+https://kafka.apache.org/42/implementation/message-format/
+
+RecordBatch:
+baseOffset: int64
+batchLength: int32
+partitionLeaderEpoch: int32
+magic: int8 (current magic value is 2)
+crc: uint32
+attributes: int16
+
+	bit 0~2:
+		0: no compression
+		1: gzip
+		2: snappy
+		3: lz4
+		4: zstd
+	bit 3: timestampType
+	bit 4: isTransactional (0 means not transactional)
+	bit 5: isControlBatch (0 means not a control batch)
+	bit 6: hasDeleteHorizonMs (0 means baseTimestamp is not set as the delete horizon for compaction)
+	bit 7~15: unused
+
+lastOffsetDelta: int32
+baseTimestamp: int64
+maxTimestamp: int64
+producerId: int64
+producerEpoch: int16
+baseSequence: int32
+recordsCount: int32
+records: [Record]
+
+Record:
+length: varint
+attributes: int8
+
+	bit 0~7: unused
+
+timestampDelta: varlong
+offsetDelta: varint
+keyLength: varint
+key: byte[]
+valueLength: varint
+value: byte[]
+headersCount: varint
+Headers => [Header]
+
+Header:
+headerKeyLength: varint
+headerKey: String
+headerValueLength: varint
+Value: byte[]
+
+VARINT:
+Represents an integer between -231 and 231-1 inclusive.
+Encoding follows the variable-length zig-zag encoding from Google Protocol Buffers.
+https://protobuf.dev/programming-guides/encoding/
+
+To actually parse a Record, we must look at the Record.value field, which is a byte array.
+To understand how the Record.value field is serialized,
+we look at this Kafka souce code file:
+https://github.com/apache/kafka/blob/5b3027dfcbcb62d169d4b4421260226e620459af/server-common/src/main/java/org/apache/kafka/server/common/serialization/AbstractApiMessageSerde.java
+
+public void write(ApiMessageAndVersion data,
+
+					ObjectSerializationCache serializationCache,
+					Writable out) {
+		out.writeUnsignedVarint(DEFAULT_FRAME_VERSION);
+		out.writeUnsignedVarint(data.message().apiKey());
+		out.writeUnsignedVarint(data.version());
+		data.message().write(out, serializationCache, data.version());
+	}
+
+The AbstractApiMessageSerde.write method shows that there will be 3 common fields:
+
+	Frame Version: UNSIGNED_VARINT
+		Frame Version is an UNSIGNED_VARINT indicating the version of the format of the record.
+		The line "out.writeUnsignedVarint(DEFAULT_FRAME_VERSION);" and
+		"private static final short DEFAULT_FRAME_VERSION = 1;" shows that the
+		FrameVersion will always be 1.
+	Type: UNSIGNED_VARINT
+		Type is an UNSIGNED_VARINT indicating the type of the record.
+		Also known as apiKey.
+	Version: UNSIGNED_VARINT
+		Version is an UNSIGNED_VARINT indicating the version of the partition record.
+
+Note that these are not official field names.
+
+To see how the bytes are laid out, check out: https://binspec.org/kafka-cluster-metadata
+There is a discrepancy in binspec, which says they're 1 byte, but the source code uses
+Readable.readUnsignedVarint and Writable.writeUnsignedVarint, so they must be UNSIGNED_VARINT.
+
+One thing to note, when parsing, these values are small enough to fit in an int16, or even int8,
+but use int16 to be safe since the underlying source code use short (which is int16 in java).
+
+So the picture is this:
+On the wire:
+frameVersion -> UNSIGNED_VARINT
+apiKey       -> UNSIGNED_VARINT
+version      -> UNSIGNED_VARINT
+
+In Kafka's Java model:
+frameVersion -> short
+apiKey       -> short
+version      -> short
+
+Which is why AbstractApiMessageSerde does this:
+short frameVersion = unsignedIntToShort(input, "frame version");
+short apiKey = unsignedIntToShort(input, "type");
+short version = unsignedIntToShort(input, "version");
+
+Use UNSIGNED_VARINT encoding because small integers are compact,
+but semantically these are short-sized identifiers.
+
+Since there are many types of Record, they are determined using the Type field, aka apiKey.
+For a list of Record, check out: https://github.com/apache/kafka/tree/5b3027dfcbcb62d169d4b4421260226e620459af/metadata/src/main/resources/common/metadata
+
+For this task, we are interested in the following metadata Record:
+
+	TopicRecord, PartitionRecord, and FeatureLevelRecord.
+
+Their schemas can be found in the list of Record link above.
+
+We will need parse this file and extract the following:
+
+	Topic names and their UUIDs
+	Partition IDs for each topic
+
+frameVersion, err := value.ReadUvarintAsInt16("frame version")
+
+	if err != nil {
+		return err
+	}
+
+recordType, err := value.ReadUvarintAsInt16("type")
+
+	if err != nil {
+		return err
+	}
+
+recordVersion, err := value.ReadUvarintAsInt16("version")
+
+	if err != nil {
+		return err
+	}
+*/
+func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read cluster metadata log: %w", err)
@@ -66,9 +250,9 @@ func parseClusterMetadataLog(path string) ([]*RecordBatch, error) {
 
 	file := NewFrame(data)
 
-	var recordBatches []*RecordBatch
+	var recordBatches []RecordBatch
 	for file.Remaining() > 0 {
-		recordBatch := &RecordBatch{}
+		recordBatch := RecordBatch{}
 
 		recordBatch.baseOffset, err = file.ReadInt64()
 		if err != nil {
@@ -90,118 +274,117 @@ func parseClusterMetadataLog(path string) ([]*RecordBatch, error) {
 			return nil, fmt.Errorf("failed reading magic: %v", err)
 		}
 		if recordBatch.magic != 2 {
+			return nil, fmt.Errorf("unsupported record batch magic: %d", recordBatch.magic)
+		}
 
+		_, err = file.ReadBytes(4) // crc
+		if err != nil {
+			return nil, fmt.Errorf("failed reading crc: %v", err)
+		}
+
+		attributes, err := file.ReadInt16()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading attributes: %v", err)
+		}
+
+		compression := attributes & 0x0007
+		if compression != 0 {
+			return nil, fmt.Errorf("unsupported compressed record batch, compression type: %d", compression)
+		}
+
+		recordBatch.lastOffsetDelta, err = file.ReadInt32()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading last offset delta: %v", err)
+		}
+
+		recordBatch.baseTimestamp, err = file.ReadInt64()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading base time stamp: %v", err)
+		}
+
+		recordBatch.maxTimestamp, err = file.ReadInt64()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading max time stamp: %v", err)
+		}
+
+		recordBatch.producerId, err = file.ReadInt64()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading producer id: %v", err)
+		}
+
+		recordBatch.producerEpoch, err = file.ReadInt16()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading producer epoch: %v", err)
+		}
+
+		recordBatch.baseSequence, err = file.ReadInt32()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading base sequence: %v", err)
+		}
+
+		recordsCount, err := file.ReadInt32()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading records count: %v", err)
+		}
+
+		record := Record{}
+		for range recordsCount {
+			_, err = file.ReadVarint() // record length, don't think we're gonna need it or store it
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record length: %v", err)
+			}
+
+			record.attributes, err = file.ReadInt8()
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record attributes: %v", err)
+			}
+
+			record.timestampDelta, err = file.ReadVarint()
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record time stamp delta: %v", err)
+			}
+
+			record.offsetDelta, err = file.ReadVarint32()
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record offset delta: %v", err)
+			}
+
+			keyLength, err := file.ReadVarint32()
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record key length: %v", err)
+			}
+
+			if keyLength > 0 { // keylength can be -1, which is null
+				record.key, err = file.ReadBytes(int(keyLength))
+				if err != nil {
+					return nil, fmt.Errorf("failed reading record key: %v", err)
+				}
+			}
+
+			valueLength, err := file.ReadVarint32()
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record value length: %v", err)
+			}
+
+			record.value, err = file.ReadBytes(int(valueLength))
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record value: %v", err)
+			}
+
+			headersCount, err := file.ReadVarint32()
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record header count: %v", err)
+			}
+
+			if headersCount > 0 { // keylength can be 0, meaning no headers
+				return nil, errors.New("Expect zero headers count")
+			}
+
+			recordBatch.records = append(recordBatch.records, record)
 		}
 
 		recordBatches = append(recordBatches, recordBatch)
 	}
-
-	// TODO!
-	/*
-		Kafka stores metadata about topics in the __cluster_metadata topic.
-		This is an internal topic that contains records about topic creation,
-		partition assignments, and other cluster configuration.
-		To check if a topic exists and get its metadata,
-		you'll need to read the cluster metadata log file.
-
-		The log file is located at:
-		/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log
-
-		The log file contains Record Batches.
-		The documentation for the on-disk format of the RecordBatch and Record structs is here:
-		https://kafka.apache.org/42/implementation/message-format/
-
-		RecordBatch:
-		baseOffset: int64
-		batchLength: int32
-		partitionLeaderEpoch: int32
-		magic: int8 (current magic value is 2)
-		crc: uint32
-		attributes: int16
-			bit 0~2:
-				0: no compression
-				1: gzip
-				2: snappy
-				3: lz4
-				4: zstd
-			bit 3: timestampType
-			bit 4: isTransactional (0 means not transactional)
-			bit 5: isControlBatch (0 means not a control batch)
-			bit 6: hasDeleteHorizonMs (0 means baseTimestamp is not set as the delete horizon for compaction)
-			bit 7~15: unused
-		lastOffsetDelta: int32
-		baseTimestamp: int64
-		maxTimestamp: int64
-		producerId: int64
-		producerEpoch: int16
-		baseSequence: int32
-		recordsCount: int32
-		records: [Record]
-
-		Record:
-		length: varint
-		attributes: int8
-			bit 0~7: unused
-		timestampDelta: varlong
-		offsetDelta: varint
-		keyLength: varint
-		key: byte[]
-		valueLength: varint
-		value: byte[]
-		headersCount: varint
-		Headers => [Header]
-
-		Header:
-		headerKeyLength: varint
-		headerKey: String
-		headerValueLength: varint
-		Value: byte[]
-
-		VARINT:
-		Represents an integer between -231 and 231-1 inclusive.
-		Encoding follows the variable-length zig-zag encoding from Google Protocol Buffers.
-		https://protobuf.dev/programming-guides/encoding/
-
-		To actually parse a Record, we must look at the Record.value field, which is a byte array.
-		To understand how the Record.value field is serialized,
-		we look at this Kafka souce code file:
-		https://github.com/apache/kafka/blob/5b3027dfcbcb62d169d4b4421260226e620459af/server-common/src/main/java/org/apache/kafka/server/common/serialization/AbstractApiMessageSerde.java
-
-		public void write(ApiMessageAndVersion data,
-						ObjectSerializationCache serializationCache,
-						Writable out) {
-			out.writeUnsignedVarint(DEFAULT_FRAME_VERSION);
-			out.writeUnsignedVarint(data.message().apiKey());
-			out.writeUnsignedVarint(data.version());
-			data.message().write(out, serializationCache, data.version());
-		}
-
-		The AbstractApiMessageSerde.write method shows that there will be 3 common fields:
-			Frame Version: int8
-				Frame Version is a 1-byte integer indicating the version of the format of the record.
-				The line "out.writeUnsignedVarint(DEFAULT_FRAME_VERSION);" and
-				"private static final short DEFAULT_FRAME_VERSION = 1;" shows that the
-				FrameVersion will always be 1.
-			Type: int8
-				Type is a 1-byte integer indicating the type of the record.
-				Also known as apiKey.
-			Version: int8
-				Version is a 1-byte integer indicating the version of the partition record.
-		Note that these are not official field names.
-
-		To see how the bytes are laid out, check out: https://binspec.org/kafka-cluster-metadata
-
-		Since there are many types of Record, they are determined using the Type field, aka apiKey.
-		For a list of Record, check out: https://github.com/apache/kafka/tree/5b3027dfcbcb62d169d4b4421260226e620459af/metadata/src/main/resources/common/metadata
-
-		For this task, we are interested in the following metadata Record:
-			TopicRecord, PartitionRecord, and FeatureLevelRecord.
-		Their schemas can be found in the list of Record link above.
-
-		We will need parse this file and extract the following:
-			Topic names and their UUIDs
-			Partition IDs for each topic
-	*/
 
 	return recordBatches, nil
 }

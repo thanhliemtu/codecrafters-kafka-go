@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 )
 
 var (
@@ -13,6 +14,7 @@ var (
 	ErrNullCompactString   = errors.New("frame: compact string cannot be null")
 )
 
+// This struct is not thread-safe
 type Frame struct {
 	buf []byte
 	pos int
@@ -114,6 +116,19 @@ func (f *Frame) ReadUvarint() (uint64, error) {
 	return 0, ErrUvarintTooLarge
 }
 
+func (f *Frame) ReadUvarintAsInt16(field string) (int16, error) {
+	v, err := f.ReadUvarint()
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", field, err)
+	}
+
+	if v > math.MaxInt16 {
+		return 0, fmt.Errorf("%s too large for int16: %d", field, v)
+	}
+
+	return int16(v), nil
+}
+
 // See more: https://protobuf.dev/programming-guides/encoding/#varints
 // Kafka signed VARINT uses zig-zag encoding.
 // Used by Record.length, timestampDelta, offsetDelta, keyLength, valueLength, headersCount.
@@ -129,6 +144,15 @@ func (f *Frame) ReadVarint() (int64, error) {
 	// 2 -> 1
 	// 3 -> -2
 	return int64(u>>1) ^ -int64(u&1), nil
+}
+
+func (f *Frame) ReadVarint32() (int32, error) {
+	v, err := f.ReadVarint()
+	return int32(v), err
+}
+
+func (f *Frame) ReadVarint64() (int64, error) {
+	return f.ReadVarint()
 }
 
 func (f *Frame) SkipTaggedFields() error {
