@@ -17,6 +17,8 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
+var metadata map[topicName]topicMetadata
+
 func handleConnection(ctx context.Context, conn net.Conn) {
 	defer func() {
 		log.Printf("Closing connection from: %s", conn.RemoteAddr().String())
@@ -186,7 +188,10 @@ func main() {
 
 	records := flattenRecordBatch(recordBatches)
 
-	parseRecords(records)
+	metadata, err = parseRecords(records)
+	if err != nil {
+		panic("Error parsing records")
+	}
 
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	log.Println("Logs from your program will appear here!")

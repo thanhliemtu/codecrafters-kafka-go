@@ -62,10 +62,23 @@ type RecordValueHeader struct {
 	RecordVersion int16
 }
 
+type partitionMetadata struct {
+	ID           partitionID
+	LeaderID     int32
+	LeaderEpoch  int32
+	ReplicaNodes []int32
+	IsrNodes     []int32
+
+	// For this stage, these can probably be empty.
+	EligibleLeaderReplicas []int32
+	LastKnownElr           []int32
+	OfflineReplicas        []int32
+}
+
 type partitionID = int32
 type topicName = string
 type topicID = [16]byte
-type topicPartitions = []partitionID // a topic can have mutliple partitions
+type topicPartitions = []partitionMetadata // a topic can have mutliple partitions
 
 type topicMetadata struct {
 	ID         topicID
@@ -420,8 +433,8 @@ func parseRecordValueHeader(value *Frame) (RecordValueHeader, error) {
 }
 
 func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
-	ID2Name := make(map[[16]byte]string)       // UUID -> string
-	ID2Partition := make(map[[16]byte][]int32) // UUID -> []int32
+	ID2Name := make(map[[16]byte]string)                   // UUID -> string
+	ID2Partition := make(map[[16]byte][]partitionMetadata) // UUID -> []partitionMetadata
 
 	for _, records := range records {
 		value := NewFrame(records.value)
@@ -460,10 +473,69 @@ func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
 				return nil, fmt.Errorf("failed parsing topic uuid: %v", err)
 			}
 
+			compact_replica_array_length, err := value.ReadUvarint()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing replica array length: %v", err)
+			}
+
+			var replicaNodes []int32
+			if compact_replica_array_length > 0 {
+				for range compact_replica_array_length - 1 {
+					node, err := value.ReadInt32()
+					if err != nil {
+						return nil, fmt.Errorf("failed parsing replica array node: %v", err)
+					}
+					replicaNodes = append(replicaNodes, node)
+				}
+			}
+
+			compact_in_sync_replica_array_length, err := value.ReadUvarint()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing in sync replica array length: %v", err)
+			}
+
+			var IsrNodes []int32
+			if compact_in_sync_replica_array_length > 0 {
+				for range compact_in_sync_replica_array_length - 1 {
+					node, err := value.ReadInt32()
+					if err != nil {
+						return nil, fmt.Errorf("failed parsing in sync replica array node: %v", err)
+					}
+					IsrNodes = append(IsrNodes, node)
+				}
+			}
+
+			_, err = value.ReadUvarint() // Length of Removing Replicas array
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing removing replica array length: %v", err)
+			}
+
+			_, err = value.ReadUvarint() // Length of Adding Replicas array
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing adding replica array length: %v", err)
+			}
+
+			leaderID, err := value.ReadInt32()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing leader id: %v", err)
+			}
+
+			leaderEpoch, err := value.ReadInt32()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing leader epoch: %v", err)
+			}
+
+			partitionMetadata := partitionMetadata{
+				ID:           partitionID,
+				LeaderID:     leaderID,
+				LeaderEpoch:  leaderEpoch,
+				ReplicaNodes: replicaNodes,
+				IsrNodes:     IsrNodes,
+			}
 			// fmt.Printf("%+v\n", partitionID)
 			// fmt.Printf("%+v\n", topicID)
 
-			ID2Partition[topicID] = append(ID2Partition[topicID], partitionID)
+			ID2Partition[topicID] = append(ID2Partition[topicID], partitionMetadata)
 		case 12:
 		default:
 			return nil, fmt.Errorf("unexpected record type, got: %v", header.RecordType)
@@ -471,12 +543,12 @@ func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
 	}
 
 	ret := make(map[topicName]topicMetadata)
-	for id, name := range ID2Name {
-		ret[name] = topicMetadata{
-			ID:         id,
-			Partitions: ID2Partition[id],
-		}
-	}
+	// for id, name := range ID2Name {
+	// 	ret[name] = topicMetadata{
+	// 		ID:         id,
+	// 		Partitions: ID2Partition[id],
+	// 	}
+	// }
 	fmt.Println(ret)
 	return ret, nil
 }

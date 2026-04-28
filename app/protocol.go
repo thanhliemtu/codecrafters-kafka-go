@@ -165,7 +165,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 
 		Also topics length follows the N+1 syntax
 	*/
-	var topics []string
+	var topicQueries []string
 	compact_topics_len, err := frame.ReadUvarint()
 
 	if err != nil {
@@ -177,7 +177,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	}
 
 	for range compact_topics_len - 1 {
-		topic, err := frame.ReadCompactString() // topic_name
+		topicQuery, err := frame.ReadCompactString() // topic_name
 		if err != nil {
 			return []byte{}, fmt.Errorf("read topic: %v", err)
 		}
@@ -187,18 +187,38 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 			return []byte{}, fmt.Errorf("read tag buffer: %v", err)
 		}
 
-		topics = append(topics, topic)
+		topicQueries = append(topicQueries, topicQuery)
 	}
 
-	if len(topics) == 0 {
+	if len(topicQueries) == 0 {
 		return []byte{}, fmt.Errorf("empty topic array: %v", err)
 	}
 
-	topic := topics[0]
+	type topicMetadataOrError struct {
+		queryName      string
+		queryMetadata  *topicMetadata
+		queryErrorCode uint16
+	}
 
-	error_code := ERROR_NONE
-	if topic != "foo" {
-		error_code = UNKNOWN_TOPIC_OR_PARTITION
+	var topicMetadataOrErrors []topicMetadataOrError
+
+	for _, topicQuery := range topicQueries {
+		val, ok := metadata[topicQuery]
+		if !ok {
+			temp := topicMetadataOrError{
+				queryName:      topicQuery,
+				queryMetadata:  nil,
+				queryErrorCode: UNKNOWN_TOPIC_OR_PARTITION,
+			}
+			topicMetadataOrErrors = append(topicMetadataOrErrors, temp)
+		} else {
+			temp := topicMetadataOrError{
+				queryName:      topicQuery,
+				queryMetadata:  &val,
+				queryErrorCode: ERROR_NONE,
+			}
+			topicMetadataOrErrors = append(topicMetadataOrErrors, temp)
+		}
 	}
 
 	/*
@@ -237,16 +257,31 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	// Body
 	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
-	body = append(body, 2) // topics array length: 1 element (1 byte)
+	body = binary.AppendUvarint(body, uint64(len(topicMetadataOrErrors)+1)) // topics array length (unsigned varint)
 
-	body = binary.BigEndian.AppendUint16(body, uint16(error_code)) // error_code: 3 (2 bytes)
-	body = binary.AppendUvarint(body, uint64(len(topic)+1))        // name length: 3 (compact string) (1 byte)
-	body = append(body, topic...)                                  // topic_name: "foo" (3 bytes)
-	body = append(body, make([]byte, 16)...)                       // topic_id: 0000000000000000 (16 bytes)
-	body = append(body, 0)                                         // is_internal: false (1 byte)
-	body = append(body, 1)                                         // partitions array: 0 element (1 byte)
-	body = binary.BigEndian.AppendUint32(body, uint32(0))          // topic_authorized_operations:  0 (4 bytes)
-	body = append(body, 0)                                         // TAG_BUFFER (1 byte)
+	for _, query := range topicMetadataOrErrors {
+		body = binary.BigEndian.AppendUint16(body, uint16(query.queryErrorCode)) // error_code (2 bytes)
+		body = binary.AppendUvarint(body, uint64(len(query.queryName)+1))        // name length (unsigned varint)
+		body = append(body, query.queryName...)                                  // topic_name
+		if query.queryMetadata == nil {
+			body = append(body, make([]byte, 16)...) // topic_id(16 bytes)
+		} else {
+			body = append(body, query.queryMetadata.ID[:]...)
+		}
+		body = append(body, 0) // is_internal: false (1 byte)
+
+		if query.queryMetadata == nil {
+			body = append(body, 1) // partitions array: 0 element (unsigned varint)
+		} else {
+			body = binary.AppendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1))
+			// for _, partition := range query.queryMetadata.Partitions {
+
+			// }
+		}
+		body = binary.BigEndian.AppendUint32(body, uint32(0)) // topic_authorized_operations:  0 (4 bytes)
+		body = append(body, 0)                                // TAG_BUFFER (1 byte)
+
+	}
 
 	// Structs can be null
 	body = append(body, 0xff) // // next_cursor: -1 (null) (1 byte)
