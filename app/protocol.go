@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 type RequestHeaderV2 struct {
@@ -202,6 +203,8 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 
 	var topicMetadataOrErrors []topicMetadataOrError
 
+	// sorting topicQueries so that the response order stays consistent
+	slices.Sort(topicQueries)
 	for _, topicQuery := range topicQueries {
 		val, ok := metadata[topicQuery]
 		if !ok {
