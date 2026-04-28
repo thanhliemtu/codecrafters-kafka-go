@@ -271,12 +271,13 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 		body = append(body, 0) // is_internal: false (1 byte)
 
 		if query.queryMetadata == nil {
-			body = append(body, 1) // partitions array: 0 element (unsigned varint)
+			body = append(body, 1) // partitions array length: 0 element (unsigned varint)
 		} else {
-			body = binary.AppendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1))
-			// for _, partition := range query.queryMetadata.Partitions {
-
-			// }
+			body = binary.AppendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1)) // partitions array length (unsigned varint)
+			for _, partitionMetadata := range query.queryMetadata.Partitions {
+				body = binary.BigEndian.AppendUint16(body, uint16(0))
+				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.ID))
+			}
 		}
 		body = binary.BigEndian.AppendUint32(body, uint32(0)) // topic_authorized_operations:  0 (4 bytes)
 		body = append(body, 0)                                // TAG_BUFFER (1 byte)
