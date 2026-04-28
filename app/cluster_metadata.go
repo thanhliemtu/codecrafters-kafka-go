@@ -543,12 +543,12 @@ func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
 	}
 
 	ret := make(map[topicName]topicMetadata)
-	// for id, name := range ID2Name {
-	// 	ret[name] = topicMetadata{
-	// 		ID:         id,
-	// 		Partitions: ID2Partition[id],
-	// 	}
-	// }
+	for id, name := range ID2Name {
+		ret[name] = topicMetadata{
+			ID:         id,
+			Partitions: ID2Partition[id],
+		}
+	}
 	fmt.Println(ret)
 	return ret, nil
 }
