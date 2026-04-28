@@ -275,8 +275,11 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 		} else {
 			body = binary.AppendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1)) // partitions array length (unsigned varint)
 			for _, partitionMetadata := range query.queryMetadata.Partitions {
-				body = binary.BigEndian.AppendUint16(body, uint16(0))
-				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.ID))
+				body = binary.BigEndian.AppendUint16(body, uint16(0))                             // Error Code
+				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.ID))          // Partition Index
+				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.LeaderID))    // Leader ID
+				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.LeaderEpoch)) // Leader Epoch
+
 			}
 		}
 		body = binary.BigEndian.AppendUint32(body, uint32(0)) // topic_authorized_operations:  0 (4 bytes)
