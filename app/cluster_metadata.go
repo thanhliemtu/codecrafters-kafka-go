@@ -62,6 +62,16 @@ type RecordValueHeader struct {
 	RecordVersion int16
 }
 
+type partitionID = int32
+type topicName = string
+type topicID = [16]byte
+type topicPartitions = []partitionID // a topic can have mutliple partitions
+
+type topicMetadata struct {
+	ID         topicID
+	Partitions topicPartitions
+}
+
 /*
 00000000000000000000.log
 └── RecordBatch
@@ -223,24 +233,6 @@ We will need parse this file and extract the following:
 
 	Topic names and their UUIDs
 	Partition IDs for each topic
-
-frameVersion, err := value.ReadUvarintAsInt16("frame version")
-
-	if err != nil {
-		return err
-	}
-
-recordType, err := value.ReadUvarintAsInt16("type")
-
-	if err != nil {
-		return err
-	}
-
-recordVersion, err := value.ReadUvarintAsInt16("version")
-
-	if err != nil {
-		return err
-	}
 */
 func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 	data, err := os.ReadFile(path)
@@ -387,4 +379,104 @@ func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 	}
 
 	return recordBatches, nil
+}
+
+func flattenRecordBatch(recordBatch []RecordBatch) []Record {
+	var records []Record
+	for _, batch := range recordBatch {
+		for _, record := range batch.records {
+			records = append(records, record)
+		}
+	}
+	return records
+}
+
+func parseRecordValueHeader(value *Frame) (RecordValueHeader, error) {
+	frameVersion, err := value.ReadUvarintAsInt16("frame version")
+	if err != nil {
+		return RecordValueHeader{}, fmt.Errorf("failed reading record frame version: %v", err)
+	}
+	if frameVersion != 1 {
+		return RecordValueHeader{}, fmt.Errorf("expect frame version 1, got: %d", frameVersion)
+	}
+
+	recordType, err := value.ReadUvarintAsInt16("type")
+	if err != nil {
+		return RecordValueHeader{}, fmt.Errorf("failed reading record type: %v", err)
+	}
+
+	recordVersion, err := value.ReadUvarintAsInt16("version")
+	if err != nil {
+		return RecordValueHeader{}, fmt.Errorf("failed reading record version: %v", err)
+	}
+
+	ret := RecordValueHeader{
+		FrameVersion:  frameVersion,
+		RecordType:    recordType,
+		RecordVersion: recordVersion,
+	}
+
+	return ret, nil
+}
+
+func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
+	ID2Name := make(map[[16]byte]string)       // UUID -> string
+	ID2Partition := make(map[[16]byte][]int32) // UUID -> []int32
+
+	for _, records := range records {
+		value := NewFrame(records.value)
+
+		header, err := parseRecordValueHeader(&value) // pass by reference
+		if err != nil {
+			return nil, fmt.Errorf("failed parsing record value header: %v", err)
+		}
+
+		// fmt.Printf("%+v\n", header)
+
+		switch header.RecordType {
+		case 2: // Topic Record
+			topicName, err := value.ReadCompactString()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing topic name: %v", err)
+			}
+
+			topicID, err := value.ReadUUID()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing topic uuid: %v", err)
+			}
+
+			// fmt.Printf("%+v\n", topicName)
+			// fmt.Printf("%+v\n", topicID)
+
+			ID2Name[topicID] = topicName
+		case 3: // Partition Record
+			partitionID, err := value.ReadInt32()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing partition id: %v", err)
+			}
+
+			topicID, err := value.ReadUUID()
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing topic uuid: %v", err)
+			}
+
+			// fmt.Printf("%+v\n", partitionID)
+			// fmt.Printf("%+v\n", topicID)
+
+			ID2Partition[topicID] = append(ID2Partition[topicID], partitionID)
+		case 12:
+		default:
+			return nil, fmt.Errorf("unexpected record type, got: %v", header.RecordType)
+		}
+	}
+
+	ret := make(map[topicName]topicMetadata)
+	for id, name := range ID2Name {
+		ret[name] = topicMetadata{
+			ID:         id,
+			Partitions: ID2Partition[id],
+		}
+	}
+	fmt.Println(ret)
+	return ret, nil
 }

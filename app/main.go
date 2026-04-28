@@ -149,8 +149,7 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func dumpClusterMetadataLog() {
-	path := "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
+func dumpClusterMetadataLog(path string) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -176,7 +175,19 @@ func dumpClusterMetadataLog() {
 }
 
 func main() {
-	dumpClusterMetadataLog()
+	path := "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
+	// path := "00000000000000000000.log"
+	// dumpClusterMetadataLog(path)
+
+	recordBatches, err := parseClusterMetadataLog(path)
+	if err != nil {
+		panic("Error parsing metadata log file")
+	}
+
+	records := flattenRecordBatch(recordBatches)
+
+	parseRecords(records)
+
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	log.Println("Logs from your program will appear here!")
 
