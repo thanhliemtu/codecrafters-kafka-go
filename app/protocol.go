@@ -259,7 +259,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 
 	body = binary.AppendUvarint(body, uint64(len(topicMetadataOrErrors)+1)) // topics array length (unsigned varint)
 
-	for _, query := range topicMetadataOrErrors {
+	for _, query := range topicMetadataOrErrors { // looping over each topic
 		body = binary.BigEndian.AppendUint16(body, uint16(query.queryErrorCode)) // error_code (2 bytes)
 		body = binary.AppendUvarint(body, uint64(len(query.queryName)+1))        // name length (unsigned varint)
 		body = append(body, query.queryName...)                                  // topic_name
@@ -274,12 +274,27 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 			body = append(body, 1) // partitions array length: 0 element (unsigned varint)
 		} else {
 			body = binary.AppendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1)) // partitions array length (unsigned varint)
-			for _, partitionMetadata := range query.queryMetadata.Partitions {
+			for _, partitionMetadata := range query.queryMetadata.Partitions {               // looping over partitions
 				body = binary.BigEndian.AppendUint16(body, uint16(0))                             // Error Code
 				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.ID))          // Partition Index
 				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.LeaderID))    // Leader ID
 				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.LeaderEpoch)) // Leader Epoch
-				body = binary.AppendUvarint(body, uint64(len(partitionMetadata.ReplicaNodes)+1))  // replica nodes array length
+
+				body = binary.AppendUvarint(body, uint64(len(partitionMetadata.ReplicaNodes)+1)) // replica nodes array length
+				for _, node := range partitionMetadata.ReplicaNodes {
+					body = binary.BigEndian.AppendUint32(body, uint32(node))
+				}
+
+				body = binary.AppendUvarint(body, uint64(len(partitionMetadata.IsrNodes)+1)) // ISR nodes array length
+				for _, node := range partitionMetadata.IsrNodes {
+					body = binary.BigEndian.AppendUint32(body, uint32(node))
+				}
+
+				body = binary.AppendUvarint(body, uint64(1)) // Eligible Leader Replicas array length
+				body = binary.AppendUvarint(body, uint64(1)) // Last Known ELR array length
+				body = binary.AppendUvarint(body, uint64(1)) // Offline Replicas array length
+
+				body = append(body, 0) // TAG_BUFFER (1 byte)
 			}
 		}
 		body = binary.BigEndian.AppendUint32(body, uint32(0)) // topic_authorized_operations:  0 (4 bytes)
