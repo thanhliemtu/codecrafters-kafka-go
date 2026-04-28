@@ -549,6 +549,5 @@ func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
 			Partitions: ID2Partition[id],
 		}
 	}
-	fmt.Println(ret)
 	return ret, nil
 }
