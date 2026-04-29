@@ -432,6 +432,14 @@ func parseRecordValueHeader(value *Frame) (RecordValueHeader, error) {
 	return ret, nil
 }
 
+/*
+Note that NOT every Record.value fields are serialized with frame version, type, and version.
+In this instance, we are parsing Records that are in the cluster metadata log file.
+And the AbstractApiMessageSerde.write function just happens to put the bytes in that manner
+into Record.value byte array field.
+
+For other Record types, like the one in Produce API request, this function will not work.
+*/
 func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
 	ID2Name := make(map[[16]byte]string)                   // UUID -> string
 	ID2Partition := make(map[[16]byte][]partitionMetadata) // UUID -> []partitionMetadata

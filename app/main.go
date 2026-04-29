@@ -130,6 +130,8 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			var response []byte
 			var handleErr error
 			switch header.RequestAPIKey {
+			case 0:
+				response, handleErr = handleApiVersions(&frame, &header)
 			case 18:
 				response, handleErr = handleApiVersions(&frame, &header)
 			case 75:
@@ -177,6 +179,22 @@ func dumpClusterMetadataLog(path string) {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		path := os.Args[1]
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to read config file %q: %v\n", path, err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Config file path: %s\n", path)
+		fmt.Println("Config file contents:")
+		fmt.Println(string(data))
+	} else {
+		fmt.Println("No config file argument provided")
+	}
+
 	path := "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
 	// path := "00000000000000000000.log"
 	// dumpClusterMetadataLog(path)

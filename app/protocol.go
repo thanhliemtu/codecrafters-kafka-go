@@ -296,3 +296,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	response = append(response, body...)
 	return
 }
+
+func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
+	return nil, nil
+}
