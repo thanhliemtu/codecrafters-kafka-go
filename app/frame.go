@@ -252,6 +252,56 @@ func (f *Frame) ReadNullableString() (*string, error) {
 }
 
 /*
+COMPACT_NULLABLE_STRING:
+Represents a sequence of characters or null.
+First the length N + 1 is given as an UNSIGNED_VARINT.
+Then N bytes follow which are the UTF-8 encoding of the character sequence.
+A null string is represented with a length of 0.
+
+This type follows the N+1 syntax:
+0 => null
+1 => empty string
+2 => string with 1 byte
+3 => string with 2 bytes
+...
+*/
+func (f *Frame) ReadCompactNullableString() (*string, error) {
+	n, err := f.ReadUvarint()
+	if err != nil {
+		return nil, fmt.Errorf("read compact nullable string length: %w", err)
+	}
+
+	// Null check
+	if n == 0 {
+		return nil, nil
+	}
+
+	// n >= 1, actual byte length is n - 1
+	length := n - 1
+
+	// Protect int conversion before calling ReadBytes(int(length)).
+	if length > uint64(math.MaxInt) {
+		return nil, fmt.Errorf(
+			"read compact nullable string: length=%d: %w",
+			length,
+			ErrInvalidStringLength,
+		)
+	}
+
+	b, err := f.ReadBytes(int(length))
+	if err != nil {
+		return nil, fmt.Errorf(
+			"read compact nullable string payload: length=%d: %w",
+			length,
+			err,
+		)
+	}
+
+	s := string(b)
+	return &s, nil
+}
+
+/*
 ReadClientID is just a descriptive wrapper that calls ReadNullableString
 since client_id has type NULLABLE_STRING.
 

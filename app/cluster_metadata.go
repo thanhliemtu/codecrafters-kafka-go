@@ -254,27 +254,31 @@ func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 	}
 
 	file := NewFrame(data)
+	return parseRecordBatches(&file)
+}
 
+func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 	var recordBatches []RecordBatch
-	for file.Remaining() > 0 {
+	var err error
+	for frame.Remaining() > 0 {
 		recordBatch := RecordBatch{}
 
-		recordBatch.baseOffset, err = file.ReadInt64()
+		recordBatch.baseOffset, err = frame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading baseOffset: %v", err)
 		}
 
-		recordBatch.batchLength, err = file.ReadInt32()
+		recordBatch.batchLength, err = frame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading batchLength: %v", err)
 		}
 
-		recordBatch.partitionLeaderEpoch, err = file.ReadInt32()
+		recordBatch.partitionLeaderEpoch, err = frame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading partitionLeaderEpoch: %v", err)
 		}
 
-		recordBatch.magic, err = file.ReadInt8()
+		recordBatch.magic, err = frame.ReadInt8()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading magic: %v", err)
 		}
@@ -282,12 +286,12 @@ func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 			return nil, fmt.Errorf("unsupported record batch magic: %d", recordBatch.magic)
 		}
 
-		_, err = file.ReadBytes(4) // crc
+		_, err = frame.ReadBytes(4) // crc
 		if err != nil {
 			return nil, fmt.Errorf("failed reading crc: %v", err)
 		}
 
-		attributes, err := file.ReadInt16()
+		attributes, err := frame.ReadInt16()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading attributes: %v", err)
 		}
@@ -297,86 +301,86 @@ func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 			return nil, fmt.Errorf("unsupported compressed record batch, compression type: %d", compression)
 		}
 
-		recordBatch.lastOffsetDelta, err = file.ReadInt32()
+		recordBatch.lastOffsetDelta, err = frame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading last offset delta: %v", err)
 		}
 
-		recordBatch.baseTimestamp, err = file.ReadInt64()
+		recordBatch.baseTimestamp, err = frame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading base time stamp: %v", err)
 		}
 
-		recordBatch.maxTimestamp, err = file.ReadInt64()
+		recordBatch.maxTimestamp, err = frame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading max time stamp: %v", err)
 		}
 
-		recordBatch.producerId, err = file.ReadInt64()
+		recordBatch.producerId, err = frame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading producer id: %v", err)
 		}
 
-		recordBatch.producerEpoch, err = file.ReadInt16()
+		recordBatch.producerEpoch, err = frame.ReadInt16()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading producer epoch: %v", err)
 		}
 
-		recordBatch.baseSequence, err = file.ReadInt32()
+		recordBatch.baseSequence, err = frame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading base sequence: %v", err)
 		}
 
-		recordsCount, err := file.ReadInt32()
+		recordsCount, err := frame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading records count: %v", err)
 		}
 
-		record := Record{}
 		for range recordsCount {
-			_, err = file.ReadVarint() // record length, don't think we're gonna need it or store it
+			record := Record{}
+			_, err = frame.ReadVarint() // record length, don't think we're gonna need it or store it
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record length: %v", err)
 			}
 
-			record.attributes, err = file.ReadInt8()
+			record.attributes, err = frame.ReadInt8()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record attributes: %v", err)
 			}
 
-			record.timestampDelta, err = file.ReadVarint()
+			record.timestampDelta, err = frame.ReadVarint()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record time stamp delta: %v", err)
 			}
 
-			record.offsetDelta, err = file.ReadVarint32()
+			record.offsetDelta, err = frame.ReadVarint32()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record offset delta: %v", err)
 			}
 
-			keyLength, err := file.ReadVarint32()
+			keyLength, err := frame.ReadVarint32()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record key length: %v", err)
 			}
 
 			if keyLength > 0 { // keylength can be -1, which is null
-				record.key, err = file.ReadBytes(int(keyLength))
+				record.key, err = frame.ReadBytes(int(keyLength))
 				if err != nil {
 					return nil, fmt.Errorf("failed reading record key: %v", err)
 				}
 			}
 
-			valueLength, err := file.ReadVarint32()
+			valueLength, err := frame.ReadVarint32()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record value length: %v", err)
 			}
 
-			record.value, err = file.ReadBytes(int(valueLength))
+			record.value, err = frame.ReadBytes(int(valueLength))
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record value: %v", err)
 			}
 
-			headersCount, err := file.ReadVarint32()
+			headersCount, err := frame.ReadVarint32()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record header count: %v", err)
 			}
@@ -404,7 +408,8 @@ func flattenRecordBatch(recordBatch []RecordBatch) []Record {
 	return records
 }
 
-func parseRecordValueHeader(value *Frame) (RecordValueHeader, error) {
+// this modifies the original frame
+func parseMetadataLogRecordValueHeader(value *Frame) (RecordValueHeader, error) {
 	frameVersion, err := value.ReadUvarintAsInt16("frame version")
 	if err != nil {
 		return RecordValueHeader{}, fmt.Errorf("failed reading record frame version: %v", err)
@@ -440,14 +445,14 @@ into Record.value byte array field.
 
 For other Record types, like the one in Produce API request, this function will not work.
 */
-func parseRecords(records []Record) (map[topicName]topicMetadata, error) {
+func parseMetadataLogRecords(records []Record) (map[topicName]topicMetadata, error) {
 	ID2Name := make(map[[16]byte]string)                   // UUID -> string
 	ID2Partition := make(map[[16]byte][]partitionMetadata) // UUID -> []partitionMetadata
 
 	for _, records := range records {
 		value := NewFrame(records.value)
 
-		header, err := parseRecordValueHeader(&value) // pass by reference
+		header, err := parseMetadataLogRecordValueHeader(&value) // pass by reference
 		if err != nil {
 			return nil, fmt.Errorf("failed parsing record value header: %v", err)
 		}

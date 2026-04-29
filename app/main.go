@@ -180,7 +180,7 @@ func loadMetadataFromServerPropertiesArg() error {
 
 	records := flattenRecordBatch(recordBatches)
 
-	parsedMetadata, err := parseRecords(records)
+	parsedMetadata, err := parseMetadataLogRecords(records)
 	if err != nil {
 		return fmt.Errorf("parse metadata records: %w", err)
 	}
