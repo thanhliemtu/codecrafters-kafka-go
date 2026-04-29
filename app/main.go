@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -153,85 +152,82 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func dumpClusterMetadataLog(path string) {
+func loadMetadataFromServerPropertiesArg() error {
+	// Earlier Codecrafters stages may not pass /tmp/server.properties.
+	if len(os.Args) <= 1 {
+		log.Println("no server.properties argument provided; skipping metadata log loading")
+		return nil
+	}
 
-	data, err := os.ReadFile(path)
+	serverPropertiesPath := os.Args[1]
+
+	props, err := readServerPropertiesFile(serverPropertiesPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %v\n", err)
-		return
+		return fmt.Errorf("read server.properties %q: %w", serverPropertiesPath, err)
 	}
 
-	encoded := base64.StdEncoding.EncodeToString(data)
-
-	fmt.Fprintln(os.Stderr, "----- BEGIN __cluster_metadata LOG BASE64 -----")
-
-	// Print in chunks so terminals/log viewers don't hate one giant line.
-	const width = 76
-	for i := 0; i < len(encoded); i += width {
-		end := i + width
-		if end > len(encoded) {
-			end = len(encoded)
-		}
-		fmt.Fprintln(os.Stderr, encoded[i:end])
+	logDir := firstLogDir(props["log.dirs"])
+	if logDir == "" {
+		return fmt.Errorf("missing log.dirs in %q", serverPropertiesPath)
 	}
 
-	fmt.Fprintln(os.Stderr, "----- END __cluster_metadata LOG BASE64 -----")
-}
+	metadataLogFilePath := getMetadataLogFilePath(logDir)
 
-func main() {
-	if len(os.Args) > 1 {
-		path := os.Args[1]
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read config file %q: %v\n", path, err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("Config file path: %s\n", path)
-		fmt.Println("Config file contents:")
-		fmt.Println(string(data))
-	} else {
-		fmt.Println("No config file argument provided")
-	}
-
-	path := "/tmp/kraft-combined-logs/__cluster_metadata-0/00000000000000000000.log"
-	// path := "00000000000000000000.log"
-	// dumpClusterMetadataLog(path)
-
-	recordBatches, err := parseClusterMetadataLog(path)
+	recordBatches, err := parseClusterMetadataLog(metadataLogFilePath)
 	if err != nil {
-		panic("Error parsing metadata log file")
+		return fmt.Errorf("parse metadata log %q: %w", metadataLogFilePath, err)
 	}
 
 	records := flattenRecordBatch(recordBatches)
 
-	metadata, err = parseRecords(records)
+	parsedMetadata, err := parseRecords(records)
 	if err != nil {
-		panic("Error parsing records")
+		return fmt.Errorf("parse metadata records: %w", err)
+	}
+
+	metadata = parsedMetadata
+
+	log.Printf("loaded cluster metadata from %s", metadataLogFilePath)
+	return nil
+}
+
+func serve(ctx context.Context, addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("bind to %s: %w", addr, err)
+	}
+	defer l.Close()
+
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return fmt.Errorf("accept connection: %w", err)
+			}
+		}
+
+		log.Printf("New connection from: %s", conn.RemoteAddr().String())
+		go handleConnection(ctx, conn)
+	}
+}
+
+func main() {
+	log.SetOutput(os.Stdout) // log defaults to stderr
+
+	if err := loadMetadataFromServerPropertiesArg(); err != nil {
+		log.Fatalf("failed to load metadata: %v", err)
 	}
 
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	log.Println("Logs from your program will appear here!")
 
 	ctx, cancel := context.WithCancel(context.Background())
-
 	defer cancel()
 
-	l, err := net.Listen("tcp", "0.0.0.0:9092")
-	if err != nil {
-		log.Println("Failed to bind to port 9092")
-		os.Exit(1)
-	}
-
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			log.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
-		}
-
-		log.Printf("New connection from: %s", conn.RemoteAddr().String())
-		go handleConnection(ctx, conn)
+	if err := serve(ctx, "0.0.0.0:9092"); err != nil {
+		log.Fatalf("server error: %v", err)
 	}
 }
