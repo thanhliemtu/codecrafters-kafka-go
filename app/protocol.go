@@ -14,12 +14,6 @@ type RequestHeaderV2 struct {
 	ClientID          *string
 }
 
-const (
-	ERROR_NONE                 = 0
-	UNKNOWN_TOPIC_OR_PARTITION = 3
-	ERROR_UNSUPPORTED_VERSION  = 35
-)
-
 func handleApiVersions(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
 	if frame == nil || header == nil {
 		return []byte{}, errors.New("ApiVersions: received null inputs")
@@ -95,17 +89,9 @@ func handleApiVersions(frame *Frame, header *RequestHeaderV2) (response []byte, 
 
 		  Response header version: 0
 	*/
-	const ApiVersions_MIN_VERSION = 0
-	const ApiVersions_MAX_VERSION = 4
-
-	const DescribeTopicPartitions_MIN_VERSION = 0
-	const DescribeTopicPartitions_MAX_VERSION = 0
-
-	const Produce_MIN_VERSION = 0
-	const Produce_MAX_VERSION = 11
 
 	var error_code uint16 = ERROR_NONE
-	if header.RequestAPIVersion < ApiVersions_MIN_VERSION || header.RequestAPIVersion > ApiVersions_MAX_VERSION {
+	if header.RequestAPIVersion < int16(ApiKeyAndMinMaxVersions[18].MinVersion) || header.RequestAPIVersion > int16(ApiKeyAndMinMaxVersions[18].MaxVersion) {
 		error_code = ERROR_UNSUPPORTED_VERSION
 	}
 
@@ -116,30 +102,19 @@ func handleApiVersions(frame *Frame, header *RequestHeaderV2) (response []byte, 
 	// This field is the length of the [api_keys] array.
 	// Since we're working with version 4, a flexible version, this follows the N+1 syntax
 	// See here: https://github.com/apache/kafka/blob/trunk/clients/src/main/resources/common/message/ApiVersionsResponse.json
-	body = binary.AppendUvarint(body, uint64(4)) // api_keys array length (unsigned varint)
+	body = binary.AppendUvarint(body, uint64(len(ApiKeyAndMinMaxVersions)+1)) // api_keys array length (unsigned varint)
 
 	// Why is there a TAG_BUFFER after each array entry?
 	// https://cwiki.apache.org/confluence/display/KAFKA/KIP-482%3A%2BThe%2BKafka%2BProtocol%2Bshould%2BSupport%2BOptional%2BTagged%2BFields#KIP482:TheKafkaProtocolshouldSupportOptionalTaggedFields-TagSections
 	// "In a flexible version, each structure ends with a tag section."
 	// So we will often see a "00" between each entries, but semantically it belongs to the previous entry's tag section.
 
-	// For ApiVersions API (Key: 18)
-	body = binary.BigEndian.AppendUint16(body, uint16(18))                      // api_key (2 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(ApiVersions_MIN_VERSION)) // min_version (2 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(ApiVersions_MAX_VERSION)) // max_version (2 bytes)
-	body = append(body, 0)                                                      // TAG_BUFFER (1 byte)
-
-	// For DescribeTopicPartitions API (Key: 75)
-	body = binary.BigEndian.AppendUint16(body, uint16(75))                                  // api_key (2 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(DescribeTopicPartitions_MIN_VERSION)) // min_version (2 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(DescribeTopicPartitions_MAX_VERSION)) // max_version (2 bytes)
-	body = append(body, 0)                                                                  // TAG_BUFFER (1 byte)
-
-	// For Produce API (Key: 0)
-	body = binary.BigEndian.AppendUint16(body, uint16(0))                   // api_key (2 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(Produce_MIN_VERSION)) // min_version (2 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(Produce_MAX_VERSION)) // max_version (2 bytes)
-	body = append(body, 0)
+	for _, apiKeyAndMinMaxVersion := range ApiKeyAndMinMaxVersions {
+		body = binary.BigEndian.AppendUint16(body, uint16(apiKeyAndMinMaxVersion.ApiKey))     // api_key (2 bytes)
+		body = binary.BigEndian.AppendUint16(body, uint16(apiKeyAndMinMaxVersion.MinVersion)) // min_version (2 bytes)
+		body = binary.BigEndian.AppendUint16(body, uint16(apiKeyAndMinMaxVersion.MaxVersion)) // max_version (2 bytes)
+		body = append(body, 0)                                                                // TAG_BUFFER (1 byte)
+	}
 
 	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
