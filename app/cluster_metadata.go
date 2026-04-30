@@ -410,7 +410,7 @@ func flattenRecordBatch(recordBatch []RecordBatch) []Record {
 }
 
 // this modifies the original frame
-func ClusterMetadataLogparseMetadataLogRecordValueHeader(value *Frame) (ClusterMetadataLogRecordValueHeader, error) {
+func ParseMetadataLogRecordValueHeader(value *Frame) (ClusterMetadataLogRecordValueHeader, error) {
 	frameVersion, err := value.ReadUvarintAsInt16("frame version")
 	if err != nil {
 		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record frame version: %v", err)
@@ -453,7 +453,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 	for _, records := range records {
 		value := NewFrame(records.value)
 
-		header, err := ClusterMetadataLogparseMetadataLogRecordValueHeader(&value) // pass by reference
+		header, err := ParseMetadataLogRecordValueHeader(&value) // pass by reference
 		if err != nil {
 			return nil, fmt.Errorf("failed parsing record value header: %v", err)
 		}
