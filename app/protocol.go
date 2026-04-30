@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"slices"
 )
 
@@ -377,7 +378,7 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 		return nil, fmt.Errorf("failed parsing topics array: %v", err)
 	}
 
-	fmt.Printf("%#v\n", topics)
+	log.Printf("%#v\n", topics)
 
 	// Building Response
 	body := []byte{}
