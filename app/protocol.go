@@ -380,8 +380,8 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	fmt.Printf("%+v\n", topics)
 	fmt.Printf("%+v\n", metadata)
 
-	topicNameQuery := topics[0].TopicName
-	topicPartitionQuery := topics[0].TopicPartitions[0].PartitionIndex
+	// topicNameQuery := topics[0].TopicName
+	// topicPartitionQuery := topics[0].TopicPartitions[0].PartitionIndex
 
 	// Building Response
 	body := []byte{}
