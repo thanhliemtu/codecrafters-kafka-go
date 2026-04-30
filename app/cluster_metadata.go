@@ -44,7 +44,7 @@ type Record struct {
 	timestampDelta int64
 	offsetDelta    int32
 	key            []byte
-	value          []byte // [header[data_frame_version api_key version] message]
+	value          []byte // opague, can mean differently depending on context
 	headers        []RecordHeader
 }
 
@@ -55,34 +55,35 @@ type RecordHeader struct {
 	value             []byte
 }
 
-// This is the header of the Record.value field
-type RecordValueHeader struct {
+// This is the header of the Record.value field in the cluster metadata log
+type ClusterMetadataLogRecordValueHeader struct {
 	FrameVersion  int16
 	RecordType    int16
 	RecordVersion int16
 }
 
-type partitionMetadata struct {
-	ID           partitionID
+// This is for the parsed partitions in PartitionRecords in the cluster metadata log
+type ClusterMetadataLogPartitionMetadata struct {
+	ID           PartitionID
 	LeaderID     int32
 	LeaderEpoch  int32
 	ReplicaNodes []int32
 	IsrNodes     []int32
 
-	// For this stage, these can probably be empty.
+	// For the codecrafter challenges, these can probably be empty.
 	EligibleLeaderReplicas []int32
 	LastKnownElr           []int32
 	OfflineReplicas        []int32
 }
 
-type partitionID = int32
-type topicName = string
+type PartitionID = int32
+type TopicName = string
 type topicID = [16]byte
-type topicPartitions = []partitionMetadata // a topic can have mutliple partitions
 
-type topicMetadata struct {
+// This is for the topic -> partitions mapping in the cluster metadata log
+type ClusterMetadataLogTopicMetadata struct {
 	ID         topicID
-	Partitions topicPartitions
+	Partitions []ClusterMetadataLogPartitionMetadata // a topic can have mutliple partitions
 }
 
 /*
@@ -409,26 +410,26 @@ func flattenRecordBatch(recordBatch []RecordBatch) []Record {
 }
 
 // this modifies the original frame
-func parseMetadataLogRecordValueHeader(value *Frame) (RecordValueHeader, error) {
+func ClusterMetadataLogparseMetadataLogRecordValueHeader(value *Frame) (ClusterMetadataLogRecordValueHeader, error) {
 	frameVersion, err := value.ReadUvarintAsInt16("frame version")
 	if err != nil {
-		return RecordValueHeader{}, fmt.Errorf("failed reading record frame version: %v", err)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record frame version: %v", err)
 	}
 	if frameVersion != 1 {
-		return RecordValueHeader{}, fmt.Errorf("expect frame version 1, got: %d", frameVersion)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("expect frame version 1, got: %d", frameVersion)
 	}
 
 	recordType, err := value.ReadUvarintAsInt16("type")
 	if err != nil {
-		return RecordValueHeader{}, fmt.Errorf("failed reading record type: %v", err)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record type: %v", err)
 	}
 
 	recordVersion, err := value.ReadUvarintAsInt16("version")
 	if err != nil {
-		return RecordValueHeader{}, fmt.Errorf("failed reading record version: %v", err)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record version: %v", err)
 	}
 
-	ret := RecordValueHeader{
+	ret := ClusterMetadataLogRecordValueHeader{
 		FrameVersion:  frameVersion,
 		RecordType:    recordType,
 		RecordVersion: recordVersion,
@@ -445,14 +446,14 @@ into Record.value byte array field.
 
 For other Record types, like the one in Produce API request, this function will not work.
 */
-func parseMetadataLogRecords(records []Record) (map[topicName]topicMetadata, error) {
-	ID2Name := make(map[[16]byte]string)                   // UUID -> string
-	ID2Partition := make(map[[16]byte][]partitionMetadata) // UUID -> []partitionMetadata
+func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLogTopicMetadata, error) {
+	ID2Name := make(map[[16]byte]string)                                     // UUID -> string
+	ID2Partition := make(map[[16]byte][]ClusterMetadataLogPartitionMetadata) // UUID -> []ClusterMetadataLogPartitionMetadata
 
 	for _, records := range records {
 		value := NewFrame(records.value)
 
-		header, err := parseMetadataLogRecordValueHeader(&value) // pass by reference
+		header, err := ClusterMetadataLogparseMetadataLogRecordValueHeader(&value) // pass by reference
 		if err != nil {
 			return nil, fmt.Errorf("failed parsing record value header: %v", err)
 		}
@@ -538,7 +539,7 @@ func parseMetadataLogRecords(records []Record) (map[topicName]topicMetadata, err
 				return nil, fmt.Errorf("failed parsing leader epoch: %v", err)
 			}
 
-			partitionMetadata := partitionMetadata{
+			ClusterMetadataLogPartitionMetadata := ClusterMetadataLogPartitionMetadata{
 				ID:           partitionID,
 				LeaderID:     leaderID,
 				LeaderEpoch:  leaderEpoch,
@@ -548,16 +549,16 @@ func parseMetadataLogRecords(records []Record) (map[topicName]topicMetadata, err
 			// fmt.Printf("%+v\n", partitionID)
 			// fmt.Printf("%+v\n", topicID)
 
-			ID2Partition[topicID] = append(ID2Partition[topicID], partitionMetadata)
+			ID2Partition[topicID] = append(ID2Partition[topicID], ClusterMetadataLogPartitionMetadata)
 		case 12:
 		default:
 			return nil, fmt.Errorf("unexpected record type, got: %v", header.RecordType)
 		}
 	}
 
-	ret := make(map[topicName]topicMetadata)
+	ret := make(map[TopicName]ClusterMetadataLogTopicMetadata)
 	for id, name := range ID2Name {
-		ret[name] = topicMetadata{
+		ret[name] = ClusterMetadataLogTopicMetadata{
 			ID:         id,
 			Partitions: ID2Partition[id],
 		}

@@ -180,7 +180,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 
 	type topicMetadataOrError struct {
 		queryName      string
-		queryMetadata  *topicMetadata
+		queryMetadata  *ClusterMetadataLogTopicMetadata
 		queryErrorCode uint16
 	}
 
@@ -297,6 +297,19 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	return
 }
 
+// ProduceRequest-specific struct
+type ProducePartitionData struct {
+	PartitionIndex int32
+	RecordBatch    *RecordBatch
+	// In ProduceRequest.java validateRecords says EXACTLY 1 RecordBatch per Partition
+	// The field can be nil since the records byte blobs is COMPACT_NULLABLE_BYTES
+}
+
+type ProduceTopicData struct {
+	TopicName       string
+	TopicPartitions []ProducePartitionData
+}
+
 func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
 	/*
 		Produce Request (Version: 11) => transactional_id acks timeout_ms [topic_data]
@@ -308,6 +321,16 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 			partition_data => index records
 				index => INT32
 				records => COMPACT_RECORDS
+
+		See more:
+			Schema: https://github.com/apache/kafka/blob/22c1e445f17e82ac66800d8150ab46b5547e4035/clients/src/main/resources/common/message/ProduceRequest.json
+				This JSON schema is for the bytes that are laid out to get sent over the wires.
+				partition_data.records can be null, the byte blobs for the RecordBatch array
+				might not exist, hence it's nullable in the schema.
+			Source: https://github.com/apache/kafka/blob/trunk/clients/src/main/java/org/apache/kafka/common/requests/ProduceRequest.java
+				If partition_data.records CAN be parse into an array of RecordBaches, then
+				ProduceRequest.validateRecords method confirms that Produce Requests
+				are only allowed to contain EXACTLY 1 RecordBatch per partition.
 
 		Produce Response (Version: 11) => [responses] throttle_time_ms [node_endpoints]<tag: 0>
 		  responses => name [partition_responses]
@@ -332,5 +355,140 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 		    port => INT32
 		    rack => COMPACT_NULLABLE_STRING
 	*/
+
+	// Parsing Request
+	_, err = frame.ReadCompactNullableString() // transactional_id (COMPACT_NULLABLE_STRING)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading transactional id: %v", err)
+	}
+
+	_, err = frame.ReadInt16() // acks (INT16)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading acks: %v", err)
+	}
+
+	_, err = frame.ReadInt32() // timeout_ms (INT32)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading timeout ms: %v", err)
+	}
+
+	topics, err := ParseProduceTopics(frame)
+	if err != nil {
+		return nil, fmt.Errorf("failed parsing topics array: %v", err)
+	}
+
+	fmt.Printf("%#v\n", topics)
+
+	// Building Response
+	body := []byte{}
+
+	// Response Header v1 (this one has tag buffer)
+	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
+	body = append(body, 0)                                                   // TAG_BUFFER (1 byte)
+
+	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
+
+	body = append(body, 0) // TAG_BUFFER (1 byte)
+	response = binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+	response = append(response, body...)
 	return
+}
+
+func ParseProduceTopics(frame *Frame) ([]ProduceTopicData, error) {
+	compact_topic_data_array_length, err := frame.ReadUvarint()
+	if err != nil {
+		return nil, fmt.Errorf("failed reading topic data array length: %v", err)
+	}
+
+	// topic_data array does not have nullableVersion, the bytes blob for it must exist
+	if compact_topic_data_array_length == 0 {
+		return nil, fmt.Errorf("topic_data array can not be null")
+	}
+
+	var topics []ProduceTopicData
+	for range compact_topic_data_array_length - 1 {
+		topicName, err := frame.ReadCompactString() // topic name
+		if err != nil {
+			return nil, fmt.Errorf("failed reading topic name: %v", err)
+		}
+
+		partitions, err := ParseProducePartitions(frame)
+		if err != nil {
+			return nil, fmt.Errorf("failed reading topic partition data: %v", err)
+		}
+
+		_, err = frame.ReadByte() // TAG_BUFFER for this topic
+		if err != nil {
+			return nil, fmt.Errorf("read topic tag buffer: %v", err)
+		}
+
+		topics = append(topics, ProduceTopicData{
+			TopicName:       topicName,
+			TopicPartitions: partitions,
+		})
+	}
+
+	return topics, nil
+}
+
+func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
+	compact_partition_data_array_length, err := frame.ReadUvarint()
+	if err != nil {
+		return nil, fmt.Errorf("failed reading partition data array length: %v", err)
+	}
+
+	if compact_partition_data_array_length == 0 {
+		return nil, fmt.Errorf("partition data array can not be null")
+	}
+
+	var partitions []ProducePartitionData
+	for range compact_partition_data_array_length - 1 {
+		partitionIndex, err := frame.ReadInt32()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading partition index: %v", err)
+		}
+
+		compact_record_batch_array_length, err := frame.ReadUvarint()
+		if err != nil {
+			return nil, fmt.Errorf("failed reading partition data array length: %v", err)
+		}
+
+		var recordBatch *RecordBatch = nil
+
+		if compact_record_batch_array_length > 1 {
+			record_batches_byte_blob, err := frame.ReadBytes(int(compact_record_batch_array_length - 1))
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record batches byte blob: %v", err)
+			}
+
+			record_batches_frame := NewFrame(record_batches_byte_blob)
+
+			record_batch_array, err := parseRecordBatches(&record_batches_frame)
+
+			if err != nil {
+				return nil, fmt.Errorf("failed parsing record batches: %v", err)
+			}
+
+			if len(record_batch_array) == 0 {
+				return nil, fmt.Errorf("must have at least one record batch for this partition")
+			} else if len(record_batch_array) > 1 {
+				return nil, fmt.Errorf("must have exactly one record batch for this partition")
+			}
+
+			recordBatch = &record_batch_array[0]
+		}
+
+		_, err = frame.ReadByte() // TAG_BUFFER for this partition
+		if err != nil {
+			return nil, fmt.Errorf("read partition tag buffer: %v", err)
+		}
+
+		partitions = append(partitions, ProducePartitionData{
+			PartitionIndex: partitionIndex,
+			RecordBatch:    recordBatch,
+		})
+
+	}
+
+	return partitions, nil
 }

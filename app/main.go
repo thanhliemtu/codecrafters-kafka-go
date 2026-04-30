@@ -16,7 +16,7 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
-var metadata map[topicName]topicMetadata
+var metadata map[TopicName]ClusterMetadataLogTopicMetadata
 
 func handleConnection(ctx context.Context, conn net.Conn) {
 	defer func() {
