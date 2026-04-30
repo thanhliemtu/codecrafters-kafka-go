@@ -358,6 +358,7 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	*/
 
 	// Parsing Request
+	log.Print("Hello world!")
 	_, err = frame.ReadCompactNullableString() // transactional_id (COMPACT_NULLABLE_STRING)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading transactional id: %v", err)
