@@ -357,7 +357,6 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	*/
 
 	// Parsing Request
-	fmt.Println("Hello world!")
 	_, err = frame.ReadCompactNullableString() // transactional_id (COMPACT_NULLABLE_STRING)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading transactional id: %v", err)
@@ -378,7 +377,8 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 		return nil, fmt.Errorf("failed parsing topics array: %v", err)
 	}
 
-	fmt.Printf("%#v\n", topics)
+	fmt.Printf("%+v\n", topics)
+	fmt.Printf("%+v\n", metadata)
 
 	// Building Response
 	body := []byte{}
