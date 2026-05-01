@@ -86,6 +86,8 @@ type ClusterMetadataLogTopicMetadata struct {
 	Partitions []ClusterMetadataLogPartitionMetadata // a topic can have mutliple partitions
 }
 
+var metadata map[TopicName]ClusterMetadataLogTopicMetadata
+
 /*
 00000000000000000000.log
 └── RecordBatch

@@ -194,7 +194,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 			temp := topicMetadataOrError{
 				queryName:      topicQuery,
 				queryMetadata:  nil,
-				queryErrorCode: UNKNOWN_TOPIC_OR_PARTITION,
+				queryErrorCode: ERROR_UNKNOWN_TOPIC_OR_PARTITION,
 			}
 			topicMetadataOrErrors = append(topicMetadataOrErrors, temp)
 		} else {
@@ -310,6 +310,19 @@ type ProduceTopicData struct {
 	TopicPartitions []ProducePartitionData
 }
 
+type ProducePartitionQueryResult struct {
+	PartitionData ProducePartitionData
+	Metadata      *ClusterMetadataLogPartitionMetadata // nil if partition was not found
+	ErrorCode     int16                                // ERROR_NONE or UNKNOWN_TOPIC_OR_PARTITION
+}
+
+type ProduceTopicQueryResult struct {
+	TopicData        ProduceTopicData
+	Metadata         *ClusterMetadataLogTopicMetadata // nil if topic was not found
+	ErrorCode        int16                            // ERROR_NONE or UNKNOWN_TOPIC_OR_PARTITION (debug only, does not get serialized)
+	PartitionResults []ProducePartitionQueryResult
+}
+
 func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
 	/*
 		Produce Request (Version: 11) => transactional_id acks timeout_ms [topic_data]
@@ -380,6 +393,8 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	fmt.Printf("%+v\n", topics)
 	fmt.Printf("%+v\n", metadata)
 
+	result := QueryProduceTopics(topics, metadata)
+	fmt.Printf("%+v\n", result)
 	// topicNameQuery := topics[0].TopicName
 	// topicPartitionQuery := topics[0].TopicPartitions[0].PartitionIndex
 
@@ -495,4 +510,76 @@ func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
 	}
 
 	return partitions, nil
+}
+
+func QueryProduceTopics(
+	topics []ProduceTopicData,
+	metadata map[TopicName]ClusterMetadataLogTopicMetadata,
+) []ProduceTopicQueryResult {
+	results := make([]ProduceTopicQueryResult, 0, len(topics))
+
+	for _, topic := range topics {
+		topicResult := ProduceTopicQueryResult{
+			TopicData: topic,
+			ErrorCode: ERROR_NONE,
+			PartitionResults: make(
+				[]ProducePartitionQueryResult,
+				0,
+				len(topic.TopicPartitions),
+			),
+		}
+
+		topicMeta, topicExists := metadata[topic.TopicName]
+		if !topicExists {
+			topicResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
+		} else {
+			topicMetaCopy := topicMeta
+			topicResult.Metadata = &topicMetaCopy
+		}
+
+		for _, partition := range topic.TopicPartitions {
+			partitionResult := ProducePartitionQueryResult{
+				PartitionData: partition,
+				ErrorCode:     ERROR_NONE,
+			}
+
+			if !topicExists {
+				// Topic missing means this requested topic-partition is invalid.
+				partitionResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
+			} else {
+				partitionMeta, ok := findPartitionMetadata(
+					topicMeta.Partitions,
+					partition.PartitionIndex,
+				)
+				if !ok {
+					partitionResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
+					topicResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
+				} else {
+					partitionMetaCopy := partitionMeta
+					partitionResult.Metadata = &partitionMetaCopy
+				}
+			}
+
+			topicResult.PartitionResults = append(
+				topicResult.PartitionResults,
+				partitionResult,
+			)
+		}
+
+		results = append(results, topicResult)
+	}
+
+	return results
+}
+
+func findPartitionMetadata(
+	partitions []ClusterMetadataLogPartitionMetadata,
+	id PartitionID,
+) (ClusterMetadataLogPartitionMetadata, bool) {
+	for _, partition := range partitions {
+		if partition.ID == id {
+			return partition, true
+		}
+	}
+	return ClusterMetadataLogPartitionMetadata{}, false
 }
