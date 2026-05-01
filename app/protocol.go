@@ -393,11 +393,8 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	fmt.Printf("%+v\n", topics)
 	fmt.Printf("%+v\n", metadata)
 
-	result := QueryProduceTopics(topics, metadata)
-	fmt.Printf("%+v\n", result)
-
-	// topicNameQuery := topics[0].TopicName
-	// topicPartitionQuery := topics[0].TopicPartitions[0].PartitionIndex
+	produceTopicQueryResults := QueryProduceTopics(topics, metadata)
+	fmt.Printf("%+v\n", produceTopicQueryResults)
 
 	// Building Response
 	body := []byte{}
@@ -405,6 +402,31 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	// Response Header v1 (this one has tag buffer)
 	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
 	body = append(body, 0)                                                   // TAG_BUFFER (1 byte)
+
+	body = binary.AppendUvarint(body, uint64(len(produceTopicQueryResults)+1)) // topic query array length + 1 (unsigned varint)
+	for _, produceTopicQueryResult := range produceTopicQueryResults {         // looping over each query topic
+		body = binary.AppendUvarint(body, uint64(len(produceTopicQueryResult.TopicData.TopicName)+1)) // topic_name length + 1 (unsigned varint)
+		body = append(body, produceTopicQueryResult.TopicData.TopicName...)                           // topic_name
+
+		body = binary.AppendUvarint(body, uint64(len(produceTopicQueryResult.PartitionResults)+1)) // partition query array length + 1 (unsigned varint)
+		for _, producePartitionResult := range produceTopicQueryResult.PartitionResults {          // looping over each query partiion for a topic
+			body = binary.BigEndian.AppendUint32(body, uint32(producePartitionResult.PartitionData.PartitionIndex)) // partition_index (4 bytes)
+
+			body = binary.BigEndian.AppendUint16(body, uint16(producePartitionResult.ErrorCode)) // error_code (2 bytes)
+
+			body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // base_offset (8 bytes)
+			body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_append_time (8 bytes)
+			body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_start_offset (8 bytes)
+
+			body = binary.AppendUvarint(body, uint64(0+1)) // record errors array length + 1 (unsigned varint) empty array, no array blob after
+
+			body = binary.AppendUvarint(body, uint64(0)) // error message length (unsigned varint) null string, no blob after this
+
+			body = append(body, 0) // TAG_BUFFER (1 byte)
+		}
+
+		body = append(body, 0) // TAG_BUFFER (1 byte)
+	}
 
 	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
