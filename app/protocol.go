@@ -420,7 +420,12 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 				body = binary.BigEndian.AppendUint64(body, 0)
 			}
 			body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_append_time (8 bytes)
-			body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_start_offset (8 bytes)
+
+			if producePartitionResult.ErrorCode == ERROR_UNKNOWN_TOPIC_OR_PARTITION {
+				body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_start_offset (8 bytes)
+			} else {
+				body = binary.BigEndian.AppendUint64(body, 0)
+			}
 
 			body = binary.AppendUvarint(body, uint64(0+1)) // record errors array length + 1 (unsigned varint) empty array, no array blob after
 
