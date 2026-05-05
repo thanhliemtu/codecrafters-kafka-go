@@ -20,6 +20,12 @@ var ApiKeyAndMinMaxVersions = map[uint16]ApiKeyAndMinMaxVersion{
 		MinVersion: 0,
 		MaxVersion: 11,
 	},
+	1: {
+		ApiKey:     1,
+		Name:       "Fetch",
+		MinVersion: 0,
+		MaxVersion: 16,
+	},
 	18: {
 		ApiKey:     18,
 		Name:       "ApiVersions",
