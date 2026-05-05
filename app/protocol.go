@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 )
 
@@ -389,11 +391,16 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 		return nil, fmt.Errorf("failed parsing topics array: %v", err)
 	}
 
-	fmt.Printf("%+v\n", topics)
-	fmt.Printf("%+v\n", metadata)
+	// fmt.Printf("%+v\n", topics)
+	// fmt.Printf("%+v\n", metadata)
 
 	produceTopicQueryResults := QueryProduceTopics(topics, metadata)
-	fmt.Printf("%+v\n", produceTopicQueryResults)
+	// fmt.Printf("%+v\n", produceTopicQueryResults)
+
+	// Once we have the result, we persist them on the filesystem
+	if err := PersistProduceRecords(logDir, produceTopicQueryResults); err != nil {
+		return nil, err
+	}
 
 	// Building Response
 	body := []byte{}
@@ -613,4 +620,91 @@ func findPartitionMetadata(
 		}
 	}
 	return ClusterMetadataLogPartitionMetadata{}, false
+}
+
+func (b RecordBatch) ValidateSerializable() error {
+	if b.magic != 2 {
+		return fmt.Errorf("record batch magic must be 2, got %d", b.magic)
+	}
+
+	if b.attributes&0x07 != 0 {
+		return fmt.Errorf("compressed record batches are not supported in this serializer: attributes=%d", b.attributes)
+	}
+
+	if len(b.records) == 0 {
+		return fmt.Errorf("record batch must contain at least one record")
+	}
+
+	return nil
+}
+
+func PersistProduceRecords(
+	logDir string,
+	results []ProduceTopicQueryResult,
+) error {
+	for _, topicResult := range results {
+		topicName := topicResult.TopicData.TopicName
+
+		for _, partitionResult := range topicResult.PartitionResults {
+			if partitionResult.ErrorCode != ERROR_NONE {
+				continue
+			}
+
+			batch := partitionResult.PartitionData.RecordBatch
+			if batch == nil {
+				return fmt.Errorf(
+					"cannot persist nil record batch: topic=%q partition=%d",
+					topicName,
+					partitionResult.PartitionData.PartitionIndex,
+				)
+			}
+
+			// Work on a shallow copy so response/query structs stay unchanged.
+			batchToWrite := *batch
+
+			if partitionResult.Metadata != nil {
+				batchToWrite.partitionLeaderEpoch = partitionResult.Metadata.LeaderEpoch
+			}
+
+			if err := batchToWrite.ValidateSerializable(); err != nil {
+				return fmt.Errorf(
+					"invalid record batch: topic=%q partition=%d: %w",
+					topicName,
+					partitionResult.PartitionData.PartitionIndex,
+					err,
+				)
+			}
+
+			data := batchToWrite.Bytes()
+
+			partitionDir := filepath.Join(
+				logDir,
+				fmt.Sprintf("%s-%d", topicName, partitionResult.PartitionData.PartitionIndex),
+			)
+
+			if err := os.MkdirAll(partitionDir, 0755); err != nil {
+				return fmt.Errorf("create partition log dir %q: %w", partitionDir, err)
+			}
+
+			logPath := filepath.Join(partitionDir, "00000000000000000000.log")
+
+			f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				return fmt.Errorf("open log file %q: %w", logPath, err)
+			}
+
+			_, writeErr := f.Write(data)
+			closeErr := f.Close()
+
+			if writeErr != nil {
+				return fmt.Errorf("write record batch to %q: %w", logPath, writeErr)
+			}
+
+			if closeErr != nil {
+				return fmt.Errorf("close log file %q: %w", logPath, closeErr)
+			}
+		}
+	}
+
+	return nil
 }

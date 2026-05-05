@@ -366,3 +366,34 @@ func (f *Frame) ReadRequestHeaderV2() (RequestHeaderV2, error) {
 		ClientID:          clientID,
 	}, nil
 }
+
+/*
+-1 => nil/null
+0 => []byte{} / empty
+>0 => actual bytes
+*/
+func readNullableBytesVarint(frame *Frame, fieldName string) ([]byte, error) {
+	n, err := frame.ReadVarint32()
+	if err != nil {
+		return nil, fmt.Errorf("failed reading %s length: %w", fieldName, err)
+	}
+
+	if n == -1 {
+		return nil, nil
+	}
+
+	if n < -1 {
+		return nil, fmt.Errorf("invalid %s length: %d", fieldName, n)
+	}
+
+	if n == 0 {
+		return []byte{}, nil
+	}
+
+	b, err := frame.ReadBytes(int(n))
+	if err != nil {
+		return nil, fmt.Errorf("failed reading %s bytes: length=%d: %w", fieldName, n, err)
+	}
+
+	return b, nil
+}

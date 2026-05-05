@@ -17,6 +17,8 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
+var logDir string // this is where all the logs are, including the cluster metadata logs
+
 func handleConnection(ctx context.Context, conn net.Conn) {
 	defer func() {
 		log.Printf("Closing connection from: %s", conn.RemoteAddr().String())
@@ -199,7 +201,7 @@ func loadMetadataFromServerPropertiesArg() error {
 		return fmt.Errorf("read server.properties %q: %w", serverPropertiesPath, err)
 	}
 
-	logDir := firstLogDir(props["log.dirs"])
+	logDir = firstLogDir(props["log.dirs"])
 	if logDir == "" {
 		return fmt.Errorf("missing log.dirs in %q", serverPropertiesPath)
 	}

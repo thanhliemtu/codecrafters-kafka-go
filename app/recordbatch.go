@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 )
 
+// https://kafka.apache.org/42/implementation/message-format
 // a slice or a []byte field inside a struct is just a header (24 bytes: pointer, length, capacity).
 type RecordBatch struct {
 	baseOffset           int64
@@ -32,7 +35,7 @@ type RecordBatch struct {
 	producerId      int64
 	producerEpoch   int16
 	baseSequence    int32
-	records         []Record
+	records         []Record // default nil
 }
 
 type Record struct {
@@ -44,7 +47,9 @@ type Record struct {
 	offsetDelta    int32
 	key            []byte
 	value          []byte // opague, can mean differently depending on context
-	headers        []RecordHeader
+	/*The key of a record header is guaranteed to be non-null,
+	while the value of a record header may be null*/
+	headers []RecordHeader
 }
 
 type RecordHeader struct {
@@ -76,12 +81,23 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 			return nil, fmt.Errorf("failed reading batchLength: %v", err)
 		}
 
-		recordBatch.partitionLeaderEpoch, err = frame.ReadInt32()
+		if recordBatch.batchLength < 0 {
+			return nil, fmt.Errorf("invalid negative batchLength: %d", recordBatch.batchLength)
+		}
+
+		batchBytes, err := frame.ReadBytes(int(recordBatch.batchLength))
+		if err != nil {
+			return nil, fmt.Errorf("failed reading batch payload: length=%d: %w", recordBatch.batchLength, err)
+		}
+
+		batchFrame := NewFrame(batchBytes)
+
+		recordBatch.partitionLeaderEpoch, err = batchFrame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading partitionLeaderEpoch: %v", err)
 		}
 
-		recordBatch.magic, err = frame.ReadInt8()
+		recordBatch.magic, err = batchFrame.ReadInt8()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading magic: %v", err)
 		}
@@ -89,12 +105,13 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 			return nil, fmt.Errorf("unsupported record batch magic: %d", recordBatch.magic)
 		}
 
-		_, err = frame.ReadBytes(4) // crc
+		crcBytes, err := batchFrame.ReadBytes(4)
 		if err != nil {
-			return nil, fmt.Errorf("failed reading crc: %v", err)
+			return nil, fmt.Errorf("failed reading crc: %w", err)
 		}
+		recordBatch.crc = binary.BigEndian.Uint32(crcBytes)
 
-		attributes, err := frame.ReadInt16()
+		attributes, err := batchFrame.ReadInt16()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading attributes: %v", err)
 		}
@@ -104,86 +121,92 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 			return nil, fmt.Errorf("unsupported compressed record batch, compression type: %d", compression)
 		}
 
-		recordBatch.lastOffsetDelta, err = frame.ReadInt32()
+		recordBatch.attributes = attributes
+
+		recordBatch.lastOffsetDelta, err = batchFrame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading last offset delta: %v", err)
 		}
 
-		recordBatch.baseTimestamp, err = frame.ReadInt64()
+		recordBatch.baseTimestamp, err = batchFrame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading base time stamp: %v", err)
 		}
 
-		recordBatch.maxTimestamp, err = frame.ReadInt64()
+		recordBatch.maxTimestamp, err = batchFrame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading max time stamp: %v", err)
 		}
 
-		recordBatch.producerId, err = frame.ReadInt64()
+		recordBatch.producerId, err = batchFrame.ReadInt64()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading producer id: %v", err)
 		}
 
-		recordBatch.producerEpoch, err = frame.ReadInt16()
+		recordBatch.producerEpoch, err = batchFrame.ReadInt16()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading producer epoch: %v", err)
 		}
 
-		recordBatch.baseSequence, err = frame.ReadInt32()
+		recordBatch.baseSequence, err = batchFrame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading base sequence: %v", err)
 		}
 
-		recordsCount, err := frame.ReadInt32()
+		recordsCount, err := batchFrame.ReadInt32()
 		if err != nil {
 			return nil, fmt.Errorf("failed reading records count: %v", err)
 		}
 
+		if recordsCount < 0 {
+			return nil, fmt.Errorf("invalid negative records count: %d", recordsCount)
+		}
+
 		for range recordsCount {
 			record := Record{}
-			_, err = frame.ReadVarint() // record length, don't think we're gonna need it or store it
+
+			recordLen, err := batchFrame.ReadVarint()
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record length: %v", err)
+				return nil, fmt.Errorf("failed reading record length: %w", err)
 			}
 
-			record.attributes, err = frame.ReadInt8()
+			if recordLen < 0 {
+				return nil, fmt.Errorf("invalid negative record length: %d", recordLen)
+			}
+
+			recordBytes, err := batchFrame.ReadBytes(int(recordLen))
+			if err != nil {
+				return nil, fmt.Errorf("failed reading record body: length=%d: %w", recordLen, err)
+			}
+
+			recordFrame := NewFrame(recordBytes)
+
+			record.attributes, err = recordFrame.ReadInt8()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record attributes: %v", err)
 			}
 
-			record.timestampDelta, err = frame.ReadVarint()
+			record.timestampDelta, err = recordFrame.ReadVarint()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record time stamp delta: %v", err)
 			}
 
-			record.offsetDelta, err = frame.ReadVarint32()
+			record.offsetDelta, err = recordFrame.ReadVarint32()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record offset delta: %v", err)
 			}
 
-			keyLength, err := frame.ReadVarint32()
+			record.key, err = readNullableBytesVarint(&recordFrame, "record key")
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record key length: %v", err)
+				return nil, err
 			}
 
-			if keyLength > 0 { // keylength can be -1, which is null
-				record.key, err = frame.ReadBytes(int(keyLength))
-				if err != nil {
-					return nil, fmt.Errorf("failed reading record key: %v", err)
-				}
-			}
-
-			valueLength, err := frame.ReadVarint32()
+			record.value, err = readNullableBytesVarint(&recordFrame, "record value")
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record value length: %v", err)
+				return nil, err
 			}
 
-			record.value, err = frame.ReadBytes(int(valueLength))
-			if err != nil {
-				return nil, fmt.Errorf("failed reading record value: %v", err)
-			}
-
-			headersCount, err := frame.ReadVarint32()
+			headersCount, err := recordFrame.ReadVarint32()
 			if err != nil {
 				return nil, fmt.Errorf("failed reading record header count: %v", err)
 			}
@@ -192,10 +215,19 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 				return nil, errors.New("Expect zero headers count")
 			}
 
+			if recordFrame.Remaining() != 0 {
+				return nil, fmt.Errorf("trailing bytes in record body: remaining=%d", recordFrame.Remaining())
+			}
+
 			recordBatch.records = append(recordBatch.records, record)
 		}
 
+		if batchFrame.Remaining() != 0 {
+			return nil, fmt.Errorf("trailing bytes in record batch: remaining=%d", batchFrame.Remaining())
+		}
+
 		recordBatches = append(recordBatches, recordBatch)
+
 	}
 
 	return recordBatches, nil
@@ -212,4 +244,110 @@ func flattenRecordBatch(recordBatch []RecordBatch) []Record {
 		}
 	}
 	return records
+}
+
+func (h RecordHeader) Bytes() []byte {
+	var out []byte
+
+	keyBytes := []byte(h.headerKey)
+
+	// headerKeyLength: varint
+	out = appendVarint(out, int64(len(keyBytes)))
+
+	// headerKey: string bytes
+	out = append(out, keyBytes...)
+
+	// headerValueLength + value
+	out = appendNullableBytesVarint(out, h.value)
+
+	return out
+}
+
+func (r Record) Bytes() []byte {
+	var body []byte
+
+	// attributes: int8
+	body = appendInt8(body, r.attributes)
+
+	// timestampDelta: varlong
+	body = appendVarint(body, r.timestampDelta)
+
+	// offsetDelta: varint
+	body = appendVarint(body, int64(r.offsetDelta))
+
+	// keyLength + key
+	body = appendNullableBytesVarint(body, r.key)
+
+	// valueLength + value
+	body = appendNullableBytesVarint(body, r.value)
+
+	// headersCount: varint
+	body = appendVarint(body, int64(len(r.headers)))
+
+	// headers
+	for _, h := range r.headers {
+		body = append(body, h.Bytes()...)
+	}
+
+	var out []byte
+
+	// length: varint
+	out = appendVarint(out, int64(len(body)))
+
+	// record body
+	out = append(out, body...)
+
+	return out
+}
+
+func (b RecordBatch) Bytes() []byte {
+	var recordsBytes []byte
+	for _, record := range b.records {
+		recordsBytes = append(recordsBytes, record.Bytes()...)
+	}
+
+	recordsCount := int32(len(b.records))
+
+	// The CRC covers the data from the attributes to the end of the batch (i.e. all the bytes that follow the CRC)
+	var crcPayload []byte
+
+	crcPayload = appendInt16(crcPayload, b.attributes)
+	crcPayload = appendInt32(crcPayload, b.lastOffsetDelta)
+	crcPayload = appendInt64(crcPayload, b.baseTimestamp)
+	crcPayload = appendInt64(crcPayload, b.maxTimestamp)
+	crcPayload = appendInt64(crcPayload, b.producerId)
+	crcPayload = appendInt16(crcPayload, b.producerEpoch)
+	crcPayload = appendInt32(crcPayload, b.baseSequence)
+	crcPayload = appendInt32(crcPayload, recordsCount)
+	crcPayload = append(crcPayload, recordsBytes...)
+
+	crc := crc32.Checksum(crcPayload, crc32cTable)
+
+	/*
+		batchLength represents the number of bytes from the current position
+		(immediately after the batchLength field) to the end of the batch
+
+		That means:
+		  partitionLeaderEpoch: 4
+		  magic:                1
+		  crc:                  4
+		  crcPayload:           variable
+
+		Total full batch size is:
+		  baseOffset:   8
+		  batchLength:  4
+		  batchLength bytes...
+	*/
+	batchLength := int32(4 + 1 + 4 + len(crcPayload))
+
+	var out []byte
+
+	out = appendInt64(out, b.baseOffset)
+	out = appendInt32(out, batchLength)
+	out = appendInt32(out, b.partitionLeaderEpoch)
+	out = appendInt8(out, b.magic)
+	out = appendUint32(out, crc)
+	out = append(out, crcPayload...)
+
+	return out
 }

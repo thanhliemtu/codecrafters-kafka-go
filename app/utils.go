@@ -8,6 +8,10 @@ import (
 var crc32cTable = crc32.MakeTable(crc32.Castagnoli)
 
 // Signed Integers
+func appendInt8(dst []byte, v int8) []byte {
+	return append(dst, byte(v))
+}
+
 func appendInt16(dst []byte, v int16) []byte {
 	return binary.BigEndian.AppendUint16(dst, uint16(v))
 }
@@ -41,4 +45,15 @@ func appendVarint(dst []byte, v int64) []byte {
 
 func appendUvarint(dst []byte, v uint64) []byte {
 	return binary.AppendUvarint(dst, v)
+}
+
+// Others
+func appendNullableBytesVarint(dst []byte, b []byte) []byte {
+	if b == nil {
+		return appendVarint(dst, -1)
+	}
+
+	dst = appendVarint(dst, int64(len(b)))
+	dst = append(dst, b...)
+	return dst
 }
