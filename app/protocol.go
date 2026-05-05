@@ -708,3 +708,22 @@ func PersistProduceRecords(
 
 	return nil
 }
+
+func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
+	// Building Response
+	body := []byte{}
+
+	// Response Header v1 (this one has tag buffer)
+	body = appendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
+	body = append(body, 0)                                  // TAG_BUFFER (1 byte)
+
+	body = appendInt32(body, 0)          // throttle_time_ms (INT32)
+	body = appendInt16(body, ERROR_NONE) // error_code (INT16)
+	body = appendInt32(body, 0)          // session_id (INT32)
+	body = appendUvarint(body, 1)        // response compact array length
+
+	body = append(body, 0) // TAG_BUFFER (1 byte)
+	response = appendUint32(nil, uint32(len(body)))
+	response = append(response, body...)
+	return
+}

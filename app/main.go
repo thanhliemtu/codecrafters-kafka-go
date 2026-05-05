@@ -132,6 +132,8 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			switch header.RequestAPIKey {
 			case 0:
 				response, handleErr = handleProduce(&frame, &header)
+			case 1:
+				response, handleErr = handleFetch(&frame, &header)
 			case 18:
 				response, handleErr = handleApiVersions(&frame, &header)
 			case 75:
