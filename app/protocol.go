@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"slices"
@@ -96,13 +95,13 @@ func handleApiVersions(frame *Frame, header *RequestHeaderV2) (response []byte, 
 	}
 
 	body := []byte{}
-	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
-	body = binary.BigEndian.AppendUint16(body, uint16(error_code))           // error_code (2 bytes)
+	body = appendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
+	body = appendUint16(body, uint16(error_code))           // error_code (2 bytes)
 
 	// This field is the length of the [api_keys] array.
 	// Since we're working with version 4, a flexible version, this follows the N+1 syntax
 	// See here: https://github.com/apache/kafka/blob/trunk/clients/src/main/resources/common/message/ApiVersionsResponse.json
-	body = binary.AppendUvarint(body, uint64(len(ApiKeyAndMinMaxVersions)+1)) // api_keys array length (unsigned varint)
+	body = appendUvarint(body, uint64(len(ApiKeyAndMinMaxVersions)+1)) // api_keys array length (unsigned varint)
 
 	// Why is there a TAG_BUFFER after each array entry?
 	// https://cwiki.apache.org/confluence/display/KAFKA/KIP-482%3A%2BThe%2BKafka%2BProtocol%2Bshould%2BSupport%2BOptional%2BTagged%2BFields#KIP482:TheKafkaProtocolshouldSupportOptionalTaggedFields-TagSections
@@ -110,18 +109,18 @@ func handleApiVersions(frame *Frame, header *RequestHeaderV2) (response []byte, 
 	// So we will often see a "00" between each entries, but semantically it belongs to the previous entry's tag section.
 
 	for _, apiKeyAndMinMaxVersion := range ApiKeyAndMinMaxVersions {
-		body = binary.BigEndian.AppendUint16(body, uint16(apiKeyAndMinMaxVersion.ApiKey))     // api_key (2 bytes)
-		body = binary.BigEndian.AppendUint16(body, uint16(apiKeyAndMinMaxVersion.MinVersion)) // min_version (2 bytes)
-		body = binary.BigEndian.AppendUint16(body, uint16(apiKeyAndMinMaxVersion.MaxVersion)) // max_version (2 bytes)
-		body = append(body, 0)                                                                // TAG_BUFFER (1 byte)
+		body = appendUint16(body, uint16(apiKeyAndMinMaxVersion.ApiKey))     // api_key (2 bytes)
+		body = appendUint16(body, uint16(apiKeyAndMinMaxVersion.MinVersion)) // min_version (2 bytes)
+		body = appendUint16(body, uint16(apiKeyAndMinMaxVersion.MaxVersion)) // max_version (2 bytes)
+		body = append(body, 0)                                               // TAG_BUFFER (1 byte)
 	}
 
-	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
+	body = appendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
 	// This last TAG_BUFFER is for the whole response
 	body = append(body, 0) // TAG_BUFFER (1 byte)
 
-	response = binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+	response = appendUint32(nil, uint32(len(body)))
 	response = append(response, body...)
 	return
 }
@@ -237,18 +236,18 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	body := []byte{}
 
 	// Response Header v1 (this one has tag buffer)
-	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
-	body = append(body, 0)                                                   // TAG_BUFFER (1 byte)
+	body = appendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
+	body = append(body, 0)                                  // TAG_BUFFER (1 byte)
 
 	// Body
-	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
+	body = appendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
-	body = binary.AppendUvarint(body, uint64(len(topicMetadataOrErrors)+1)) // topics array length (unsigned varint)
+	body = appendUvarint(body, uint64(len(topicMetadataOrErrors)+1)) // topics array length (unsigned varint)
 
 	for _, query := range topicMetadataOrErrors { // looping over each topic
-		body = binary.BigEndian.AppendUint16(body, uint16(query.queryErrorCode)) // error_code (2 bytes)
-		body = binary.AppendUvarint(body, uint64(len(query.queryName)+1))        // name length (unsigned varint)
-		body = append(body, query.queryName...)                                  // topic_name
+		body = appendUint16(body, uint16(query.queryErrorCode))    // error_code (2 bytes)
+		body = appendUvarint(body, uint64(len(query.queryName)+1)) // name length (unsigned varint)
+		body = append(body, query.queryName...)                    // topic_name
 		if query.queryMetadata == nil {
 			body = append(body, make([]byte, 16)...) // topic_id(16 bytes)
 		} else {
@@ -259,32 +258,32 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 		if query.queryMetadata == nil {
 			body = append(body, 1) // partitions array length: 0 element (unsigned varint)
 		} else {
-			body = binary.AppendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1)) // partitions array length (unsigned varint)
-			for _, partitionMetadata := range query.queryMetadata.Partitions {               // looping over partitions
-				body = binary.BigEndian.AppendUint16(body, uint16(0))                             // Error Code
-				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.ID))          // Partition Index
-				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.LeaderID))    // Leader ID
-				body = binary.BigEndian.AppendUint32(body, uint32(partitionMetadata.LeaderEpoch)) // Leader Epoch
+			body = appendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1)) // partitions array length (unsigned varint)
+			for _, partitionMetadata := range query.queryMetadata.Partitions {        // looping over partitions
+				body = appendUint16(body, uint16(0))                             // Error Code
+				body = appendUint32(body, uint32(partitionMetadata.ID))          // Partition Index
+				body = appendUint32(body, uint32(partitionMetadata.LeaderID))    // Leader ID
+				body = appendUint32(body, uint32(partitionMetadata.LeaderEpoch)) // Leader Epoch
 
-				body = binary.AppendUvarint(body, uint64(len(partitionMetadata.ReplicaNodes)+1)) // replica nodes array length
+				body = appendUvarint(body, uint64(len(partitionMetadata.ReplicaNodes)+1)) // replica nodes array length
 				for _, node := range partitionMetadata.ReplicaNodes {
-					body = binary.BigEndian.AppendUint32(body, uint32(node))
+					body = appendUint32(body, uint32(node))
 				}
 
-				body = binary.AppendUvarint(body, uint64(len(partitionMetadata.IsrNodes)+1)) // ISR nodes array length
+				body = appendUvarint(body, uint64(len(partitionMetadata.IsrNodes)+1)) // ISR nodes array length
 				for _, node := range partitionMetadata.IsrNodes {
-					body = binary.BigEndian.AppendUint32(body, uint32(node))
+					body = appendUint32(body, uint32(node))
 				}
 
-				body = binary.AppendUvarint(body, uint64(1)) // Eligible Leader Replicas array length
-				body = binary.AppendUvarint(body, uint64(1)) // Last Known ELR array length
-				body = binary.AppendUvarint(body, uint64(1)) // Offline Replicas array length
+				body = appendUvarint(body, uint64(1)) // Eligible Leader Replicas array length
+				body = appendUvarint(body, uint64(1)) // Last Known ELR array length
+				body = appendUvarint(body, uint64(1)) // Offline Replicas array length
 
 				body = append(body, 0) // TAG_BUFFER (1 byte)
 			}
 		}
-		body = binary.BigEndian.AppendUint32(body, uint32(0)) // topic_authorized_operations:  0 (4 bytes)
-		body = append(body, 0)                                // TAG_BUFFER (1 byte)
+		body = appendUint32(body, uint32(0)) // topic_authorized_operations:  0 (4 bytes)
+		body = append(body, 0)               // TAG_BUFFER (1 byte)
 
 	}
 
@@ -292,7 +291,7 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	body = append(body, 0xff) // // next_cursor: -1 (null) (1 byte)
 
 	body = append(body, 0) // TAG_BUFFER (1 byte)
-	response = binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+	response = appendUint32(nil, uint32(len(body)))
 	response = append(response, body...)
 	return
 }
@@ -400,36 +399,36 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	body := []byte{}
 
 	// Response Header v1 (this one has tag buffer)
-	body = binary.BigEndian.AppendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
-	body = append(body, 0)                                                   // TAG_BUFFER (1 byte)
+	body = appendUint32(body, uint32(header.CorrelationID)) // correlation_id (4 bytes)
+	body = append(body, 0)                                  // TAG_BUFFER (1 byte)
 
-	body = binary.AppendUvarint(body, uint64(len(produceTopicQueryResults)+1)) // topic query array length + 1 (unsigned varint)
-	for _, produceTopicQueryResult := range produceTopicQueryResults {         // looping over each query topic
-		body = binary.AppendUvarint(body, uint64(len(produceTopicQueryResult.TopicData.TopicName)+1)) // topic_name length + 1 (unsigned varint)
-		body = append(body, produceTopicQueryResult.TopicData.TopicName...)                           // topic_name
+	body = appendUvarint(body, uint64(len(produceTopicQueryResults)+1)) // topic query array length + 1 (unsigned varint)
+	for _, produceTopicQueryResult := range produceTopicQueryResults {  // looping over each query topic
+		body = appendUvarint(body, uint64(len(produceTopicQueryResult.TopicData.TopicName)+1)) // topic_name length + 1 (unsigned varint)
+		body = append(body, produceTopicQueryResult.TopicData.TopicName...)                    // topic_name
 
-		body = binary.AppendUvarint(body, uint64(len(produceTopicQueryResult.PartitionResults)+1)) // partition query array length + 1 (unsigned varint)
-		for _, producePartitionResult := range produceTopicQueryResult.PartitionResults {          // looping over each query partiion for a topic
-			body = binary.BigEndian.AppendUint32(body, uint32(producePartitionResult.PartitionData.PartitionIndex)) // partition_index (4 bytes)
+		body = appendUvarint(body, uint64(len(produceTopicQueryResult.PartitionResults)+1)) // partition query array length + 1 (unsigned varint)
+		for _, producePartitionResult := range produceTopicQueryResult.PartitionResults {   // looping over each query partiion for a topic
+			body = appendUint32(body, uint32(producePartitionResult.PartitionData.PartitionIndex)) // partition_index (4 bytes)
 
-			body = binary.BigEndian.AppendUint16(body, uint16(producePartitionResult.ErrorCode)) // error_code (2 bytes)
-
-			if producePartitionResult.ErrorCode == ERROR_UNKNOWN_TOPIC_OR_PARTITION {
-				body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // base_offset (8 bytes)
-			} else {
-				body = binary.BigEndian.AppendUint64(body, 0)
-			}
-			body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_append_time (8 bytes)
+			body = appendUint16(body, uint16(producePartitionResult.ErrorCode)) // error_code (2 bytes)
 
 			if producePartitionResult.ErrorCode == ERROR_UNKNOWN_TOPIC_OR_PARTITION {
-				body = binary.BigEndian.AppendUint64(body, 0xffffffffffffffff) // log_start_offset (8 bytes)
+				body = appendUint64(body, 0xffffffffffffffff) // base_offset (8 bytes)
 			} else {
-				body = binary.BigEndian.AppendUint64(body, 0)
+				body = appendUint64(body, 0)
+			}
+			body = appendUint64(body, 0xffffffffffffffff) // log_append_time (8 bytes)
+
+			if producePartitionResult.ErrorCode == ERROR_UNKNOWN_TOPIC_OR_PARTITION {
+				body = appendUint64(body, 0xffffffffffffffff) // log_start_offset (8 bytes)
+			} else {
+				body = appendUint64(body, 0)
 			}
 
-			body = binary.AppendUvarint(body, uint64(0+1)) // record errors array length + 1 (unsigned varint) empty array, no array blob after
+			body = appendUvarint(body, uint64(0+1)) // record errors array length + 1 (unsigned varint) empty array, no array blob after
 
-			body = binary.AppendUvarint(body, uint64(0)) // error message length (unsigned varint) null string, no blob after this
+			body = appendUvarint(body, uint64(0)) // error message length (unsigned varint) null string, no blob after this
 
 			body = append(body, 0) // TAG_BUFFER (1 byte)
 		}
@@ -437,10 +436,10 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 		body = append(body, 0) // TAG_BUFFER (1 byte)
 	}
 
-	body = binary.BigEndian.AppendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
+	body = appendUint32(body, uint32(0)) // throttle_time_ms (4 bytes)
 
 	body = append(body, 0) // TAG_BUFFER (1 byte)
-	response = binary.BigEndian.AppendUint32(nil, uint32(len(body)))
+	response = appendUint32(nil, uint32(len(body)))
 	response = append(response, body...)
 	return
 }

@@ -14,19 +14,19 @@ type ApiKeyAndMinMaxVersion struct {
 }
 
 var ApiKeyAndMinMaxVersions = map[uint16]ApiKeyAndMinMaxVersion{
-	0: ApiKeyAndMinMaxVersion{
+	0: {
 		ApiKey:     0,
 		Name:       "Produce",
 		MinVersion: 0,
 		MaxVersion: 11,
 	},
-	18: ApiKeyAndMinMaxVersion{
+	18: {
 		ApiKey:     18,
 		Name:       "ApiVersions",
 		MinVersion: 0,
 		MaxVersion: 4,
 	},
-	75: ApiKeyAndMinMaxVersion{
+	75: {
 		ApiKey:     75,
 		Name:       "DescribeTopicPartitions",
 		MinVersion: 0,

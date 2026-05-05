@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -148,6 +149,40 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			}
 		}
 	}
+}
+func firstLogDir(logDirs string) string {
+	if logDirs == "" {
+		return ""
+	}
+
+	first, _, _ := strings.Cut(logDirs, ",")
+	return strings.TrimSpace(first)
+}
+
+func readServerPropertiesFile(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	props := make(map[string]string)
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		props[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+
+	return props, nil
 }
 
 func loadMetadataFromServerPropertiesArg() error {
