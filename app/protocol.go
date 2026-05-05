@@ -152,7 +152,6 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	*/
 	var topicQueries []string
 	compact_topics_len, err := frame.ReadUvarint()
-
 	if err != nil {
 		return []byte{}, fmt.Errorf("read topics length: %v", err)
 	}
@@ -710,6 +709,52 @@ func PersistProduceRecords(
 }
 
 func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
+	_, err = frame.ReadInt32() // max_wait_ms
+	if err != nil {
+		return nil, fmt.Errorf("failed reading max wait ms: %v", err)
+	}
+
+	_, err = frame.ReadInt32() // min_bytes
+	if err != nil {
+		return nil, fmt.Errorf("failed reading min bytes: %v", err)
+	}
+
+	_, err = frame.ReadInt32() // max_bytes
+	if err != nil {
+		return nil, fmt.Errorf("failed reading max bytes: %v", err)
+	}
+
+	_, err = frame.ReadInt8() // isolation_level
+	if err != nil {
+		return nil, fmt.Errorf("failed reading isolation level: %v", err)
+	}
+
+	_, err = frame.ReadInt32() // session_id
+	if err != nil {
+		return nil, fmt.Errorf("failed reading session id: %v", err)
+	}
+
+	_, err = frame.ReadInt32() // session_epoch
+	if err != nil {
+		return nil, fmt.Errorf("failed reading session epoch: %v", err)
+	}
+
+	compact_topics_array_length, err := frame.ReadUvarint()
+	if err != nil {
+		return nil, fmt.Errorf("failed reading compact topics array length: %v", err)
+	}
+
+	if compact_topics_array_length == 0 {
+		return nil, fmt.Errorf("topics array can not be null for fetch request v16")
+	}
+
+	topic_id, err := frame.ReadUUID()
+	if err != nil {
+		return nil, fmt.Errorf("failed reading topic id: %v", err)
+	}
+
+	fmt.Println(topic_id)
+
 	// Building Response
 	body := []byte{}
 
