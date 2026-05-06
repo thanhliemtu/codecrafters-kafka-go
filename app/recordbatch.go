@@ -73,12 +73,12 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 
 		recordBatch.baseOffset, err = frame.ReadInt64()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading baseOffset: %v", err)
+			return nil, fmt.Errorf("failed reading baseOffset: %w", err)
 		}
 
 		recordBatch.batchLength, err = frame.ReadInt32()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading batchLength: %v", err)
+			return nil, fmt.Errorf("failed reading batchLength: %w", err)
 		}
 
 		if recordBatch.batchLength < 0 {
@@ -94,12 +94,12 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 
 		recordBatch.partitionLeaderEpoch, err = batchFrame.ReadInt32()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading partitionLeaderEpoch: %v", err)
+			return nil, fmt.Errorf("failed reading partitionLeaderEpoch: %w", err)
 		}
 
 		recordBatch.magic, err = batchFrame.ReadInt8()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading magic: %v", err)
+			return nil, fmt.Errorf("failed reading magic: %w", err)
 		}
 		if recordBatch.magic != 2 {
 			return nil, fmt.Errorf("unsupported record batch magic: %d", recordBatch.magic)
@@ -113,7 +113,7 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 
 		attributes, err := batchFrame.ReadInt16()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading attributes: %v", err)
+			return nil, fmt.Errorf("failed reading attributes: %w", err)
 		}
 
 		compression := attributes & 0x0007
@@ -125,37 +125,37 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 
 		recordBatch.lastOffsetDelta, err = batchFrame.ReadInt32()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading last offset delta: %v", err)
+			return nil, fmt.Errorf("failed reading last offset delta: %w", err)
 		}
 
 		recordBatch.baseTimestamp, err = batchFrame.ReadInt64()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading base time stamp: %v", err)
+			return nil, fmt.Errorf("failed reading base time stamp: %w", err)
 		}
 
 		recordBatch.maxTimestamp, err = batchFrame.ReadInt64()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading max time stamp: %v", err)
+			return nil, fmt.Errorf("failed reading max time stamp: %w", err)
 		}
 
 		recordBatch.producerId, err = batchFrame.ReadInt64()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading producer id: %v", err)
+			return nil, fmt.Errorf("failed reading producer id: %w", err)
 		}
 
 		recordBatch.producerEpoch, err = batchFrame.ReadInt16()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading producer epoch: %v", err)
+			return nil, fmt.Errorf("failed reading producer epoch: %w", err)
 		}
 
 		recordBatch.baseSequence, err = batchFrame.ReadInt32()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading base sequence: %v", err)
+			return nil, fmt.Errorf("failed reading base sequence: %w", err)
 		}
 
 		recordsCount, err := batchFrame.ReadInt32()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading records count: %v", err)
+			return nil, fmt.Errorf("failed reading records count: %w", err)
 		}
 
 		if recordsCount < 0 {
@@ -183,17 +183,17 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 
 			record.attributes, err = recordFrame.ReadInt8()
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record attributes: %v", err)
+				return nil, fmt.Errorf("failed reading record attributes: %w", err)
 			}
 
 			record.timestampDelta, err = recordFrame.ReadVarint()
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record time stamp delta: %v", err)
+				return nil, fmt.Errorf("failed reading record time stamp delta: %w", err)
 			}
 
 			record.offsetDelta, err = recordFrame.ReadVarint32()
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record offset delta: %v", err)
+				return nil, fmt.Errorf("failed reading record offset delta: %w", err)
 			}
 
 			record.key, err = readNullableBytesVarint(&recordFrame, "record key")
@@ -208,7 +208,7 @@ func parseRecordBatches(frame *Frame) ([]RecordBatch, error) {
 
 			headersCount, err := recordFrame.ReadVarint32()
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record header count: %v", err)
+				return nil, fmt.Errorf("failed reading record header count: %w", err)
 			}
 
 			if headersCount > 0 { // keylength can be 0, meaning no headers

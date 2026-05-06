@@ -43,7 +43,7 @@ var metadata map[TopicName]ClusterMetadataLogTopicMetadata
 func dumpClusterMetadataLog(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %w\n", err)
 		return
 	}
 
@@ -248,7 +248,7 @@ func parseClusterMetadataLog(path string) ([]RecordBatch, error) {
 func ParseMetadataLogRecordValueHeader(value *Frame) (ClusterMetadataLogRecordValueHeader, error) {
 	frameVersion, err := value.ReadUvarintAsInt16("frame version")
 	if err != nil {
-		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record frame version: %v", err)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record frame version: %w", err)
 	}
 	if frameVersion != 1 {
 		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("expect frame version 1, got: %d", frameVersion)
@@ -256,12 +256,12 @@ func ParseMetadataLogRecordValueHeader(value *Frame) (ClusterMetadataLogRecordVa
 
 	recordType, err := value.ReadUvarintAsInt16("type")
 	if err != nil {
-		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record type: %v", err)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record type: %w", err)
 	}
 
 	recordVersion, err := value.ReadUvarintAsInt16("version")
 	if err != nil {
-		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record version: %v", err)
+		return ClusterMetadataLogRecordValueHeader{}, fmt.Errorf("failed reading record version: %w", err)
 	}
 
 	ret := ClusterMetadataLogRecordValueHeader{
@@ -290,7 +290,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 
 		header, err := ParseMetadataLogRecordValueHeader(&value) // pass by reference
 		if err != nil {
-			return nil, fmt.Errorf("failed parsing record value header: %v", err)
+			return nil, fmt.Errorf("failed parsing record value header: %w", err)
 		}
 
 		// fmt.Printf("%+v\n", header)
@@ -299,12 +299,12 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 		case 2: // Topic Record
 			topicName, err := value.ReadCompactString()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing topic name: %v", err)
+				return nil, fmt.Errorf("failed parsing topic name: %w", err)
 			}
 
 			topicID, err := value.ReadUUID()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing topic uuid: %v", err)
+				return nil, fmt.Errorf("failed parsing topic uuid: %w", err)
 			}
 
 			// fmt.Printf("%+v\n", topicName)
@@ -314,17 +314,17 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 		case 3: // Partition Record
 			partitionID, err := value.ReadInt32()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing partition id: %v", err)
+				return nil, fmt.Errorf("failed parsing partition id: %w", err)
 			}
 
 			topicID, err := value.ReadUUID()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing topic uuid: %v", err)
+				return nil, fmt.Errorf("failed parsing topic uuid: %w", err)
 			}
 
 			compact_replica_array_length, err := value.ReadUvarint()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing replica array length: %v", err)
+				return nil, fmt.Errorf("failed parsing replica array length: %w", err)
 			}
 
 			var replicaNodes []int32
@@ -332,7 +332,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 				for range compact_replica_array_length - 1 {
 					node, err := value.ReadInt32()
 					if err != nil {
-						return nil, fmt.Errorf("failed parsing replica array node: %v", err)
+						return nil, fmt.Errorf("failed parsing replica array node: %w", err)
 					}
 					replicaNodes = append(replicaNodes, node)
 				}
@@ -340,7 +340,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 
 			compact_in_sync_replica_array_length, err := value.ReadUvarint()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing in sync replica array length: %v", err)
+				return nil, fmt.Errorf("failed parsing in sync replica array length: %w", err)
 			}
 
 			var IsrNodes []int32
@@ -348,7 +348,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 				for range compact_in_sync_replica_array_length - 1 {
 					node, err := value.ReadInt32()
 					if err != nil {
-						return nil, fmt.Errorf("failed parsing in sync replica array node: %v", err)
+						return nil, fmt.Errorf("failed parsing in sync replica array node: %w", err)
 					}
 					IsrNodes = append(IsrNodes, node)
 				}
@@ -356,22 +356,22 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 
 			_, err = value.ReadUvarint() // Length of Removing Replicas array
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing removing replica array length: %v", err)
+				return nil, fmt.Errorf("failed parsing removing replica array length: %w", err)
 			}
 
 			_, err = value.ReadUvarint() // Length of Adding Replicas array
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing adding replica array length: %v", err)
+				return nil, fmt.Errorf("failed parsing adding replica array length: %w", err)
 			}
 
 			leaderID, err := value.ReadInt32()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing leader id: %v", err)
+				return nil, fmt.Errorf("failed parsing leader id: %w", err)
 			}
 
 			leaderEpoch, err := value.ReadInt32()
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing leader epoch: %v", err)
+				return nil, fmt.Errorf("failed parsing leader epoch: %w", err)
 			}
 
 			ClusterMetadataLogPartitionMetadata := ClusterMetadataLogPartitionMetadata{
@@ -387,7 +387,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 			ID2Partition[topicID] = append(ID2Partition[topicID], ClusterMetadataLogPartitionMetadata)
 		case 12:
 		default:
-			return nil, fmt.Errorf("unexpected record type, got: %v", header.RecordType)
+			return nil, fmt.Errorf("unexpected record type, got: %w", header.RecordType)
 		}
 	}
 

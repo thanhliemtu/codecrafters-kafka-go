@@ -153,29 +153,29 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 	var topicQueries []string
 	compact_topics_len, err := frame.ReadUvarint()
 	if err != nil {
-		return []byte{}, fmt.Errorf("read topics length: %v", err)
+		return []byte{}, fmt.Errorf("read topics length: %w", err)
 	}
 
 	if compact_topics_len == 0 {
-		return []byte{}, fmt.Errorf("topics can't be null: %v", err)
+		return []byte{}, fmt.Errorf("topics can't be null: %w", err)
 	}
 
 	for range compact_topics_len - 1 {
 		topicQuery, err := frame.ReadCompactString() // topic_name
 		if err != nil {
-			return []byte{}, fmt.Errorf("read topic: %v", err)
+			return []byte{}, fmt.Errorf("read topic: %w", err)
 		}
 
 		_, err = frame.ReadByte() // TAG_BUFFER (1 byte)
 		if err != nil {
-			return []byte{}, fmt.Errorf("read tag buffer: %v", err)
+			return []byte{}, fmt.Errorf("read tag buffer: %w", err)
 		}
 
 		topicQueries = append(topicQueries, topicQuery)
 	}
 
 	if len(topicQueries) == 0 {
-		return []byte{}, fmt.Errorf("empty topic array: %v", err)
+		return []byte{}, fmt.Errorf("empty topic array: %w", err)
 	}
 
 	type topicMetadataOrError struct {
@@ -372,22 +372,22 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 	// Parsing Request
 	_, err = frame.ReadCompactNullableString() // transactional_id (COMPACT_NULLABLE_STRING)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading transactional id: %v", err)
+		return nil, fmt.Errorf("failed reading transactional id: %w", err)
 	}
 
 	_, err = frame.ReadInt16() // acks (INT16)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading acks: %v", err)
+		return nil, fmt.Errorf("failed reading acks: %w", err)
 	}
 
 	_, err = frame.ReadInt32() // timeout_ms (INT32)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading timeout ms: %v", err)
+		return nil, fmt.Errorf("failed reading timeout ms: %w", err)
 	}
 
 	topics, err := ParseProduceTopics(frame)
 	if err != nil {
-		return nil, fmt.Errorf("failed parsing topics array: %v", err)
+		return nil, fmt.Errorf("failed parsing topics array: %w", err)
 	}
 
 	// fmt.Printf("%+v\n", topics)
@@ -453,7 +453,7 @@ func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err 
 func ParseProduceTopics(frame *Frame) ([]ProduceTopicData, error) {
 	compact_topic_data_array_length, err := frame.ReadUvarint()
 	if err != nil {
-		return nil, fmt.Errorf("failed reading topic data array length: %v", err)
+		return nil, fmt.Errorf("failed reading topic data array length: %w", err)
 	}
 
 	// topic_data array does not have nullableVersion, the bytes blob for it must exist
@@ -465,17 +465,17 @@ func ParseProduceTopics(frame *Frame) ([]ProduceTopicData, error) {
 	for range compact_topic_data_array_length - 1 {
 		topicName, err := frame.ReadCompactString() // topic name
 		if err != nil {
-			return nil, fmt.Errorf("failed reading topic name: %v", err)
+			return nil, fmt.Errorf("failed reading topic name: %w", err)
 		}
 
 		partitions, err := ParseProducePartitions(frame)
 		if err != nil {
-			return nil, fmt.Errorf("failed reading topic partition data: %v", err)
+			return nil, fmt.Errorf("failed reading topic partition data: %w", err)
 		}
 
 		_, err = frame.ReadByte() // TAG_BUFFER for this topic
 		if err != nil {
-			return nil, fmt.Errorf("read topic tag buffer: %v", err)
+			return nil, fmt.Errorf("read topic tag buffer: %w", err)
 		}
 
 		topics = append(topics, ProduceTopicData{
@@ -490,7 +490,7 @@ func ParseProduceTopics(frame *Frame) ([]ProduceTopicData, error) {
 func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
 	compact_partition_data_array_length, err := frame.ReadUvarint()
 	if err != nil {
-		return nil, fmt.Errorf("failed reading partition data array length: %v", err)
+		return nil, fmt.Errorf("failed reading partition data array length: %w", err)
 	}
 
 	if compact_partition_data_array_length == 0 {
@@ -501,12 +501,12 @@ func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
 	for range compact_partition_data_array_length - 1 {
 		partitionIndex, err := frame.ReadInt32()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading partition index: %v", err)
+			return nil, fmt.Errorf("failed reading partition index: %w", err)
 		}
 
 		compact_record_batch_array_length, err := frame.ReadUvarint()
 		if err != nil {
-			return nil, fmt.Errorf("failed reading partition data array length: %v", err)
+			return nil, fmt.Errorf("failed reading partition data array length: %w", err)
 		}
 
 		var recordBatch *RecordBatch = nil
@@ -514,7 +514,7 @@ func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
 		if compact_record_batch_array_length > 1 {
 			record_batches_byte_blob, err := frame.ReadBytes(int(compact_record_batch_array_length - 1))
 			if err != nil {
-				return nil, fmt.Errorf("failed reading record batches byte blob: %v", err)
+				return nil, fmt.Errorf("failed reading record batches byte blob: %w", err)
 			}
 
 			record_batches_frame := NewFrame(record_batches_byte_blob)
@@ -522,7 +522,7 @@ func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
 			record_batch_array, err := parseRecordBatches(&record_batches_frame)
 
 			if err != nil {
-				return nil, fmt.Errorf("failed parsing record batches: %v", err)
+				return nil, fmt.Errorf("failed parsing record batches: %w", err)
 			}
 
 			if len(record_batch_array) == 0 {
@@ -536,7 +536,7 @@ func ParseProducePartitions(frame *Frame) ([]ProducePartitionData, error) {
 
 		_, err = frame.ReadByte() // TAG_BUFFER for this partition
 		if err != nil {
-			return nil, fmt.Errorf("read partition tag buffer: %v", err)
+			return nil, fmt.Errorf("read partition tag buffer: %w", err)
 		}
 
 		partitions = append(partitions, ProducePartitionData{
@@ -708,52 +708,71 @@ func PersistProduceRecords(
 	return nil
 }
 
+// FetchRequest-specific structs
+type FetchPartition struct {
+	partition_id         int32 // the ID of the partition
+	current_leader_epoch int32
+	fetch_offset         int64
+	last_fetched_epoch   int32
+	log_start_offset     int64
+	partition_max_bytes  int32
+}
+
+type FetchTopic struct {
+	topic_id   [16]byte // UUID
+	partitions []FetchPartition
+}
+
 func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
 	_, err = frame.ReadInt32() // max_wait_ms
 	if err != nil {
-		return nil, fmt.Errorf("failed reading max wait ms: %v", err)
+		return nil, fmt.Errorf("failed reading max wait ms: %w", err)
 	}
 
 	_, err = frame.ReadInt32() // min_bytes
 	if err != nil {
-		return nil, fmt.Errorf("failed reading min bytes: %v", err)
+		return nil, fmt.Errorf("failed reading min bytes: %w", err)
 	}
 
 	_, err = frame.ReadInt32() // max_bytes
 	if err != nil {
-		return nil, fmt.Errorf("failed reading max bytes: %v", err)
+		return nil, fmt.Errorf("failed reading max bytes: %w", err)
 	}
 
 	_, err = frame.ReadInt8() // isolation_level
 	if err != nil {
-		return nil, fmt.Errorf("failed reading isolation level: %v", err)
+		return nil, fmt.Errorf("failed reading isolation level: %w", err)
 	}
 
 	_, err = frame.ReadInt32() // session_id
 	if err != nil {
-		return nil, fmt.Errorf("failed reading session id: %v", err)
+		return nil, fmt.Errorf("failed reading session id: %w", err)
 	}
 
 	_, err = frame.ReadInt32() // session_epoch
 	if err != nil {
-		return nil, fmt.Errorf("failed reading session epoch: %v", err)
+		return nil, fmt.Errorf("failed reading session epoch: %w", err)
 	}
 
 	compact_topics_array_length, err := frame.ReadUvarint()
 	if err != nil {
-		return nil, fmt.Errorf("failed reading compact topics array length: %v", err)
+		return nil, fmt.Errorf("failed reading compact topics array length: %w", err)
 	}
-
 	if compact_topics_array_length == 0 {
 		return nil, fmt.Errorf("topics array can not be null for fetch request v16")
 	}
 
-	topic_id, err := frame.ReadUUID()
-	if err != nil {
-		return nil, fmt.Errorf("failed reading topic id: %v", err)
+	var topics []FetchTopic
+	for range compact_topics_array_length - 1 {
+		topic, err := parseFetchTopic(frame)
+		if err != nil {
+			return nil, fmt.Errorf("failed parsing topic: %w", err)
+		}
+
+		topics = append(topics, topic)
 	}
 
-	fmt.Println(topic_id)
+	fmt.Println(topics)
 
 	// Building Response
 	body := []byte{}
@@ -771,4 +790,94 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 	response = appendUint32(nil, uint32(len(body)))
 	response = append(response, body...)
 	return
+}
+
+/*
+Parses the frame returns a SINGLE topic in a fetch request v16.
+If there are multiple topics in the topics array, call this function in a for loop.
+
+Input frame must only contain the bytes related to a single topic.
+
+Input frame should look like this: [topic 1][topic 2]...
+*/
+func parseFetchTopic(frame *Frame) (FetchTopic, error) {
+	topic_id, err := frame.ReadUUID()
+	if err != nil {
+		return FetchTopic{}, fmt.Errorf("failed reading topic id: %w", err)
+	}
+
+	compact_partitions_array_length, err := frame.ReadUvarint()
+	if err != nil {
+		return FetchTopic{}, fmt.Errorf("failed reading compact partitions array length: %w", err)
+	}
+	if compact_partitions_array_length == 0 {
+		return FetchTopic{}, fmt.Errorf("partitions array can not be null for fetch request v16")
+	}
+
+	var partitions []FetchPartition
+	for range compact_partitions_array_length - 1 {
+		partition, err := parseFetchPartition(frame)
+		if err != nil {
+			return FetchTopic{}, fmt.Errorf("failed parsing patition for topic id %d: %w", topic_id, err)
+		}
+
+		partitions = append(partitions, partition)
+	}
+
+	ret := FetchTopic{
+		topic_id:   topic_id,
+		partitions: partitions,
+	}
+	return ret, nil
+}
+
+/*
+Parses the frame returns a SINGLE partition in a fetch request v16.
+If there are multiple partitions in the partitions array,
+call this function in a for loop.
+
+Input frame must only contain the bytes related to a single partition.
+
+Input frame should look like this: [parition 1][partition 2]...
+*/
+func parseFetchPartition(frame *Frame) (FetchPartition, error) {
+	partition_id, err := frame.ReadInt32()
+	if err != nil {
+		return FetchPartition{}, fmt.Errorf("failed reading partition id: %w", err)
+	}
+
+	current_leader_epoch, err := frame.ReadInt32()
+	if err != nil {
+		return FetchPartition{}, fmt.Errorf("failed reading current leader epoch: %w", err)
+	}
+
+	fetch_offset, err := frame.ReadInt64()
+	if err != nil {
+		return FetchPartition{}, fmt.Errorf("failed reading fetch offset: %w", err)
+	}
+
+	last_fetched_epoch, err := frame.ReadInt32()
+	if err != nil {
+		return FetchPartition{}, fmt.Errorf("failed reading last fetch epoch: %w", err)
+	}
+
+	log_start_offset, err := frame.ReadInt64()
+	if err != nil {
+		return FetchPartition{}, fmt.Errorf("failed reading log start offset: %w", err)
+	}
+
+	partition_max_bytes, err := frame.ReadInt32()
+	if err != nil {
+		return FetchPartition{}, fmt.Errorf("failed reading partition max bytes: %w", err)
+	}
+
+	ret := FetchPartition{
+		partition_id:         partition_id,
+		current_leader_epoch: current_leader_epoch,
+		fetch_offset:         fetch_offset,
+		last_fetched_epoch:   last_fetched_epoch,
+		log_start_offset:     log_start_offset,
+		partition_max_bytes:  partition_max_bytes,
+	}
+	return ret, nil
 }
