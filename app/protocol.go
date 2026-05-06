@@ -772,7 +772,7 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 		topics = append(topics, topic)
 	}
 
-	fmt.Println(topics)
+	fmt.Printf("%+v\n", topics)
 
 	// Building Response
 	body := []byte{}
