@@ -16,11 +16,11 @@ type ClusterMetadataLogRecordValueHeader struct {
 
 // This is for the parsed partitions in PartitionRecords in the cluster metadata log
 type ClusterMetadataLogPartitionMetadata struct {
-	ID           PartitionID
-	LeaderID     int32
-	LeaderEpoch  int32
-	ReplicaNodes []int32
-	IsrNodes     []int32
+	PartitionIndex PartitionIndex // this is only unique WITHIN a partition
+	LeaderID       int32          // the leader is not the partition itself, it is the broker/server hosting the leader replica for this partition
+	LeaderEpoch    int32
+	ReplicaNodes   []int32
+	IsrNodes       []int32
 
 	// For the codecrafter challenges, these can probably be empty.
 	EligibleLeaderReplicas []int32
@@ -28,22 +28,23 @@ type ClusterMetadataLogPartitionMetadata struct {
 	OfflineReplicas        []int32
 }
 
-type PartitionID = int32
+type PartitionIndex = int32 // the integer 0, 1, 2,... is only unique with a topic, not globally
 type TopicName = string
-type topicID = [16]byte
+type TopicID = [16]byte
 
 // This is for the topic -> partitions mapping in the cluster metadata log
 type ClusterMetadataLogTopicMetadata struct {
-	ID         topicID
+	ID         TopicID
 	Partitions []ClusterMetadataLogPartitionMetadata // a topic can have mutliple partitions
 }
 
 var metadata map[TopicName]ClusterMetadataLogTopicMetadata
+var topicIDToName map[TopicID]TopicName // topic_id -> topic_name -> metadata[topic_name]
 
 func dumpClusterMetadataLog(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %w\n", err)
+		fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %v\n", err)
 		return
 	}
 
@@ -375,11 +376,11 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 			}
 
 			ClusterMetadataLogPartitionMetadata := ClusterMetadataLogPartitionMetadata{
-				ID:           partitionID,
-				LeaderID:     leaderID,
-				LeaderEpoch:  leaderEpoch,
-				ReplicaNodes: replicaNodes,
-				IsrNodes:     IsrNodes,
+				PartitionIndex: partitionID,
+				LeaderID:       leaderID,
+				LeaderEpoch:    leaderEpoch,
+				ReplicaNodes:   replicaNodes,
+				IsrNodes:       IsrNodes,
 			}
 			// fmt.Printf("%+v\n", partitionID)
 			// fmt.Printf("%+v\n", topicID)
@@ -387,7 +388,7 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 			ID2Partition[topicID] = append(ID2Partition[topicID], ClusterMetadataLogPartitionMetadata)
 		case 12:
 		default:
-			return nil, fmt.Errorf("unexpected record type, got: %w", header.RecordType)
+			return nil, fmt.Errorf("unexpected record type, got: %v", header.RecordType)
 		}
 	}
 
@@ -399,4 +400,16 @@ func parseMetadataLogRecords(records []Record) (map[TopicName]ClusterMetadataLog
 		}
 	}
 	return ret, nil
+}
+
+func BuildTopicIDToNameIndex(
+	metadata map[TopicName]ClusterMetadataLogTopicMetadata,
+) map[TopicID]TopicName {
+	index := make(map[TopicID]TopicName, len(metadata))
+
+	for name, topicMeta := range metadata {
+		index[topicMeta.ID] = name
+	}
+
+	return index
 }

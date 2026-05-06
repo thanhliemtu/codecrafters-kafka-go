@@ -261,10 +261,10 @@ func handleDescribeTopicPartitions(frame *Frame, header *RequestHeaderV2) (respo
 		} else {
 			body = appendUvarint(body, uint64(len(query.queryMetadata.Partitions)+1)) // partitions array length (unsigned varint)
 			for _, partitionMetadata := range query.queryMetadata.Partitions {        // looping over partitions
-				body = appendUint16(body, uint16(0))                             // Error Code
-				body = appendUint32(body, uint32(partitionMetadata.ID))          // Partition Index
-				body = appendUint32(body, uint32(partitionMetadata.LeaderID))    // Leader ID
-				body = appendUint32(body, uint32(partitionMetadata.LeaderEpoch)) // Leader Epoch
+				body = appendUint16(body, uint16(0))                                // Error Code
+				body = appendUint32(body, uint32(partitionMetadata.PartitionIndex)) // Partition Index
+				body = appendUint32(body, uint32(partitionMetadata.LeaderID))       // Leader ID
+				body = appendUint32(body, uint32(partitionMetadata.LeaderEpoch))    // Leader Epoch
 
 				body = appendUvarint(body, uint64(len(partitionMetadata.ReplicaNodes)+1)) // replica nodes array length
 				for _, node := range partitionMetadata.ReplicaNodes {
@@ -319,11 +319,16 @@ type ProducePartitionQueryResult struct {
 type ProduceTopicQueryResult struct {
 	TopicData        ProduceTopicData
 	Metadata         *ClusterMetadataLogTopicMetadata // nil if topic was not found
-	ErrorCode        int16                            // ERROR_NONE or UNKNOWN_TOPIC_OR_PARTITION (debug only, does not get serialized)
+	ErrorCode        int16                            // debug only, does not get serialized
 	PartitionResults []ProducePartitionQueryResult
 }
 
-func handleProduce(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
+func handleProduce(
+	frame *Frame,
+	header *RequestHeaderV2,
+	metadata map[TopicName]ClusterMetadataLogTopicMetadata,
+	logDir string,
+) (response []byte, err error) {
 	/*
 		Produce Request (Version: 11) => transactional_id acks timeout_ms [topic_data]
 			transactional_id => COMPACT_NULLABLE_STRING
@@ -553,7 +558,7 @@ func QueryProduceTopics(
 	topics []ProduceTopicData,
 	metadata map[TopicName]ClusterMetadataLogTopicMetadata,
 ) []ProduceTopicQueryResult {
-	results := make([]ProduceTopicQueryResult, 0, len(topics))
+	results := make([]ProduceTopicQueryResult, 0, len(topics)) // prealloc cuz why not
 
 	for _, topic := range topics {
 		topicResult := ProduceTopicQueryResult{
@@ -584,7 +589,7 @@ func QueryProduceTopics(
 				// Topic missing means this requested topic-partition is invalid.
 				partitionResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
 			} else {
-				partitionMeta, ok := findPartitionMetadata(
+				partitionMeta, ok := findPartitionMetadataWithinTopic(
 					topicMeta.Partitions,
 					partition.PartitionIndex,
 				)
@@ -609,12 +614,13 @@ func QueryProduceTopics(
 	return results
 }
 
-func findPartitionMetadata(
+// Only use this to check if a partition index exists in a particular topic, not globally.
+func findPartitionMetadataWithinTopic(
 	partitions []ClusterMetadataLogPartitionMetadata,
-	id PartitionID,
+	index PartitionIndex,
 ) (ClusterMetadataLogPartitionMetadata, bool) {
 	for _, partition := range partitions {
-		if partition.ID == id {
+		if partition.PartitionIndex == index {
 			return partition, true
 		}
 	}
@@ -709,21 +715,44 @@ func PersistProduceRecords(
 }
 
 // FetchRequest-specific structs
-type FetchPartition struct {
-	partition_id         int32 // the ID of the partition
-	current_leader_epoch int32
-	fetch_offset         int64
-	last_fetched_epoch   int32
-	log_start_offset     int64
-	partition_max_bytes  int32
+type FetchPartitionData struct {
+	PartitionIndex     int32 // the index of the partition in the topic
+	CurrentLeaderEpoch int32
+	FetchOffset        int64
+	LastFetchedEpoch   int32
+	LogStartOffset     int64
+	PartitionMaxBytes  int32
 }
 
-type FetchTopic struct {
-	topic_id   [16]byte // UUID
-	partitions []FetchPartition
+type FetchTopicData struct {
+	TopicID    [16]byte // UUID
+	Partitions []FetchPartitionData
 }
 
-func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err error) {
+type FetchPartitionQueryResult struct {
+	PartitionData FetchPartitionData
+	Metadata      *ClusterMetadataLogPartitionMetadata
+	ErrorCode     int16 // ERROR_NONE or ERROR_UNKNOWN_TOPIC_ID
+}
+
+type FetchTopicQueryResult struct {
+	TopicData FetchTopicData
+
+	TopicName TopicName // useful for locating <log-dir>/<topic-name>-<partition-index> (can be nil since it's string)
+
+	Metadata *ClusterMetadataLogTopicMetadata // nil if topic ID was not found
+
+	ErrorCode int16 // debug only, does not get serialized
+
+	PartitionResults []FetchPartitionQueryResult
+}
+
+func handleFetch(
+	frame *Frame,
+	header *RequestHeaderV2,
+	metadata map[TopicName]ClusterMetadataLogTopicMetadata,
+	topicIDToName map[TopicID]TopicName,
+) (response []byte, err error) {
 	_, err = frame.ReadInt32() // max_wait_ms
 	if err != nil {
 		return nil, fmt.Errorf("failed reading max wait ms: %w", err)
@@ -762,7 +791,7 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 		return nil, fmt.Errorf("topics array can not be null for fetch request v16")
 	}
 
-	var topics []FetchTopic
+	var topics []FetchTopicData
 	for range compact_topics_array_length - 1 {
 		topic, err := parseFetchTopic(frame)
 		if err != nil {
@@ -773,6 +802,14 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 	}
 
 	fmt.Printf("%+v\n", topics)
+
+	fetchTopicQueryResults := QueryFetchTopics(
+		topics,
+		metadata,
+		topicIDToName,
+	)
+
+	fmt.Printf("%+v\n", fetchTopicQueryResults)
 
 	// Building Response
 	body := []byte{}
@@ -787,12 +824,12 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 
 	body = appendUvarint(body, uint64(len(topics)+1)) // responses compact array length
 	for _, topic := range topics {
-		body = append(body, topic.topic_id[:]...) // topic_id (INT32)
+		body = append(body, topic.TopicID[:]...) // topic_id (INT32)
 
-		body = appendUvarint(body, uint64(len(topic.partitions)+1)) // partitions compact array length
-		for _, partition := range topic.partitions {
-			body = appendInt32(body, partition.partition_id) // partition_index (INT32)
-			body = appendInt16(body, ERROR_UNKNOWN_TOPIC_ID) // error_code (INT16)
+		body = appendUvarint(body, uint64(len(topic.Partitions)+1)) // partitions compact array length
+		for _, partition := range topic.Partitions {
+			body = appendInt32(body, partition.PartitionIndex) // partition_index (INT32)
+			body = appendInt16(body, ERROR_UNKNOWN_TOPIC_ID)   // error_code (INT16)
 
 			body = appendInt64(body, 0) // high_watermark (INT64)
 			body = appendInt64(body, 0) // last_stable_offset (INT64)
@@ -823,33 +860,33 @@ Input frame must only contain the bytes related to a single topic.
 
 Input frame should look like this: [topic 1][topic 2]...
 */
-func parseFetchTopic(frame *Frame) (FetchTopic, error) {
+func parseFetchTopic(frame *Frame) (FetchTopicData, error) {
 	topic_id, err := frame.ReadUUID()
 	if err != nil {
-		return FetchTopic{}, fmt.Errorf("failed reading topic id: %w", err)
+		return FetchTopicData{}, fmt.Errorf("failed reading topic id: %w", err)
 	}
 
 	compact_partitions_array_length, err := frame.ReadUvarint()
 	if err != nil {
-		return FetchTopic{}, fmt.Errorf("failed reading compact partitions array length: %w", err)
+		return FetchTopicData{}, fmt.Errorf("failed reading compact partitions array length: %w", err)
 	}
 	if compact_partitions_array_length == 0 {
-		return FetchTopic{}, fmt.Errorf("partitions array can not be null for fetch request v16")
+		return FetchTopicData{}, fmt.Errorf("partitions array can not be null for fetch request v16")
 	}
 
-	var partitions []FetchPartition
+	var partitions []FetchPartitionData
 	for range compact_partitions_array_length - 1 {
 		partition, err := parseFetchPartition(frame)
 		if err != nil {
-			return FetchTopic{}, fmt.Errorf("failed parsing patition for topic id %d: %w", topic_id, err)
+			return FetchTopicData{}, fmt.Errorf("failed parsing patition for topic id %d: %w", topic_id, err)
 		}
 
 		partitions = append(partitions, partition)
 	}
 
-	ret := FetchTopic{
-		topic_id:   topic_id,
-		partitions: partitions,
+	ret := FetchTopicData{
+		TopicID:    topic_id,
+		Partitions: partitions,
 	}
 	return ret, nil
 }
@@ -863,44 +900,136 @@ Input frame must only contain the bytes related to a single partition.
 
 Input frame should look like this: [parition 1][partition 2]...
 */
-func parseFetchPartition(frame *Frame) (FetchPartition, error) {
-	partition_id, err := frame.ReadInt32()
+func parseFetchPartition(frame *Frame) (FetchPartitionData, error) {
+	partition_idx, err := frame.ReadInt32()
 	if err != nil {
-		return FetchPartition{}, fmt.Errorf("failed reading partition id: %w", err)
+		return FetchPartitionData{}, fmt.Errorf("failed reading partition id: %w", err)
 	}
 
 	current_leader_epoch, err := frame.ReadInt32()
 	if err != nil {
-		return FetchPartition{}, fmt.Errorf("failed reading current leader epoch: %w", err)
+		return FetchPartitionData{}, fmt.Errorf("failed reading current leader epoch: %w", err)
 	}
 
 	fetch_offset, err := frame.ReadInt64()
 	if err != nil {
-		return FetchPartition{}, fmt.Errorf("failed reading fetch offset: %w", err)
+		return FetchPartitionData{}, fmt.Errorf("failed reading fetch offset: %w", err)
 	}
 
 	last_fetched_epoch, err := frame.ReadInt32()
 	if err != nil {
-		return FetchPartition{}, fmt.Errorf("failed reading last fetch epoch: %w", err)
+		return FetchPartitionData{}, fmt.Errorf("failed reading last fetch epoch: %w", err)
 	}
 
 	log_start_offset, err := frame.ReadInt64()
 	if err != nil {
-		return FetchPartition{}, fmt.Errorf("failed reading log start offset: %w", err)
+		return FetchPartitionData{}, fmt.Errorf("failed reading log start offset: %w", err)
 	}
 
 	partition_max_bytes, err := frame.ReadInt32()
 	if err != nil {
-		return FetchPartition{}, fmt.Errorf("failed reading partition max bytes: %w", err)
+		return FetchPartitionData{}, fmt.Errorf("failed reading partition max bytes: %w", err)
 	}
 
-	ret := FetchPartition{
-		partition_id:         partition_id,
-		current_leader_epoch: current_leader_epoch,
-		fetch_offset:         fetch_offset,
-		last_fetched_epoch:   last_fetched_epoch,
-		log_start_offset:     log_start_offset,
-		partition_max_bytes:  partition_max_bytes,
+	ret := FetchPartitionData{
+		PartitionIndex:     partition_idx,
+		CurrentLeaderEpoch: current_leader_epoch,
+		FetchOffset:        fetch_offset,
+		LastFetchedEpoch:   last_fetched_epoch,
+		LogStartOffset:     log_start_offset,
+		PartitionMaxBytes:  partition_max_bytes,
 	}
 	return ret, nil
+}
+
+func QueryFetchTopics(
+	fetchTopics []FetchTopicData,
+	metadata map[TopicName]ClusterMetadataLogTopicMetadata,
+	topicIDToName map[TopicID]TopicName,
+) []FetchTopicQueryResult {
+	results := make([]FetchTopicQueryResult, 0, len(fetchTopics))
+
+	for _, fetchTopic := range fetchTopics {
+		topicResult := FetchTopicQueryResult{
+			TopicData: fetchTopic,
+			ErrorCode: ERROR_NONE,
+			PartitionResults: make(
+				[]FetchPartitionQueryResult,
+				0,
+				len(fetchTopic.Partitions),
+			),
+		}
+
+		topicName, topicIDExists := topicIDToName[fetchTopic.TopicID]
+		if !topicIDExists {
+			topicResult.ErrorCode = ERROR_UNKNOWN_TOPIC_ID
+
+			for _, fetchPartition := range fetchTopic.Partitions {
+				topicResult.PartitionResults = append(
+					topicResult.PartitionResults,
+					FetchPartitionQueryResult{
+						PartitionData: fetchPartition,
+						Metadata:      nil,
+						ErrorCode:     ERROR_UNKNOWN_TOPIC_ID,
+					},
+				)
+			}
+
+			results = append(results, topicResult)
+			continue
+		}
+
+		topicResult.TopicName = topicName
+
+		topicMeta, topicExists := metadata[topicName]
+		if !topicExists {
+			// This should not happen if topicIDToName was built from metadata.
+			// But keeping this guard makes the function safer.
+			topicResult.ErrorCode = ERROR_UNKNOWN_TOPIC_ID
+
+			for _, fetchPartition := range fetchTopic.Partitions {
+				topicResult.PartitionResults = append(
+					topicResult.PartitionResults,
+					FetchPartitionQueryResult{
+						PartitionData: fetchPartition,
+						Metadata:      nil,
+						ErrorCode:     ERROR_UNKNOWN_TOPIC_ID,
+					},
+				)
+			}
+
+			results = append(results, topicResult)
+			continue
+		}
+
+		topicResult.Metadata = &topicMeta
+
+		for _, fetchPartition := range fetchTopic.Partitions {
+			partitionResult := FetchPartitionQueryResult{
+				PartitionData: fetchPartition,
+				ErrorCode:     ERROR_NONE,
+			}
+
+			partitionMeta, ok := findPartitionMetadataWithinTopic(
+				topicMeta.Partitions,
+				fetchPartition.PartitionIndex,
+			)
+
+			if !ok {
+				partitionResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
+				topicResult.ErrorCode = ERROR_UNKNOWN_TOPIC_OR_PARTITION
+			} else {
+				partitionResult.Metadata = &partitionMeta
+			}
+
+			topicResult.PartitionResults = append(
+				topicResult.PartitionResults,
+				partitionResult,
+			)
+		}
+
+		results = append(results, topicResult)
+	}
+
+	return results
 }

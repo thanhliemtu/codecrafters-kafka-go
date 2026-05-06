@@ -131,9 +131,9 @@ func handleConnection(ctx context.Context, conn net.Conn) {
 			var handleErr error
 			switch header.RequestAPIKey {
 			case 0:
-				response, handleErr = handleProduce(&frame, &header)
+				response, handleErr = handleProduce(&frame, &header, metadata, logDir)
 			case 1:
-				response, handleErr = handleFetch(&frame, &header)
+				response, handleErr = handleFetch(&frame, &header, metadata, topicIDToName)
 			case 18:
 				response, handleErr = handleApiVersions(&frame, &header)
 			case 75:
@@ -223,6 +223,7 @@ func loadMetadataFromServerPropertiesArg() error {
 	}
 
 	metadata = parsedMetadata
+	topicIDToName = BuildTopicIDToNameIndex(metadata)
 
 	log.Printf("loaded cluster metadata from %s", metadataLogFilePath)
 	return nil
@@ -254,6 +255,7 @@ func serve(ctx context.Context, addr string) error {
 func main() {
 	log.SetOutput(os.Stdout) // log defaults to stderr
 
+	// this function sets up the metadata mapping, also the topicId to topicName mapping
 	if err := loadMetadataFromServerPropertiesArg(); err != nil {
 		log.Fatalf("failed to load metadata: %v", err)
 	}
