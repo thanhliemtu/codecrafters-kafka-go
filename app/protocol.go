@@ -784,7 +784,8 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 	body = appendInt32(body, 0)          // throttle_time_ms (INT32)
 	body = appendInt16(body, ERROR_NONE) // error_code (INT16)
 	body = appendInt32(body, 0)          // session_id (INT32)
-	body = appendUvarint(body, 1)        // response compact array length
+
+	body = appendUvarint(body, uint64(len(topics)+1)) // response compact array length
 
 	body = append(body, 0) // TAG_BUFFER (1 byte)
 	response = appendUint32(nil, uint32(len(body)))
