@@ -787,7 +787,26 @@ func handleFetch(frame *Frame, header *RequestHeaderV2) (response []byte, err er
 
 	body = appendUvarint(body, uint64(len(topics)+1)) // responses compact array length
 	for _, topic := range topics {
-		body = append(body, topic.topic_id[:]...)
+		body = append(body, topic.topic_id[:]...) // topic_id (INT32)
+
+		body = appendUvarint(body, uint64(len(topic.partitions)+1)) // partitions compact array length
+		for _, partition := range topic.partitions {
+			body = appendInt32(body, partition.partition_id) // partition_index (INT32)
+			body = appendInt16(body, ERROR_UNKNOWN_TOPIC_ID) // error_code (INT16)
+
+			body = appendInt64(body, 0) // high_watermark (INT64)
+			body = appendInt64(body, 0) // last_stable_offset (INT64)
+			body = appendInt64(body, 0) // log_start_offset (INT64)
+
+			body = appendUvarint(body, 0) // aborted_transactions compact array length (nullable)
+
+			body = appendInt32(body, 0) // preferred_read_replica (INT32)
+
+			body = appendUvarint(body, 0) // COMPACT_RECORDS/COMPACT_NULLABLE_BYTES (nullable)
+
+			body = append(body, 0) // TAG_BUFFER (1 byte)
+		}
+		body = append(body, 0) // TAG_BUFFER (1 byte)
 	}
 
 	body = append(body, 0) // TAG_BUFFER (1 byte)

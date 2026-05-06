@@ -4,6 +4,7 @@ const (
 	ERROR_NONE                       = 0
 	ERROR_UNKNOWN_TOPIC_OR_PARTITION = 3
 	ERROR_UNSUPPORTED_VERSION        = 35
+	ERROR_UNKNOWN_TOPIC_ID           = 100
 )
 
 type ApiKeyAndMinMaxVersion struct {
