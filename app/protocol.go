@@ -822,14 +822,14 @@ func handleFetch(
 	body = appendInt16(body, ERROR_NONE) // error_code (INT16)
 	body = appendInt32(body, 0)          // session_id (INT32)
 
-	body = appendUvarint(body, uint64(len(topics)+1)) // responses compact array length
-	for _, topic := range topics {
-		body = append(body, topic.TopicID[:]...) // topic_id (INT32)
+	body = appendUvarint(body, uint64(len(fetchTopicQueryResults)+1)) // responses compact array length
+	for _, topicResult := range fetchTopicQueryResults {
+		body = append(body, topicResult.TopicData.TopicID[:]...) // topic_id (INT32)
 
-		body = appendUvarint(body, uint64(len(topic.Partitions)+1)) // partitions compact array length
-		for _, partition := range topic.Partitions {
-			body = appendInt32(body, partition.PartitionIndex) // partition_index (INT32)
-			body = appendInt16(body, ERROR_UNKNOWN_TOPIC_ID)   // error_code (INT16)
+		body = appendUvarint(body, uint64(len(topicResult.PartitionResults)+1)) // partitions compact array length
+		for _, partitionResult := range topicResult.PartitionResults {
+			body = appendInt32(body, partitionResult.PartitionData.PartitionIndex) // partition_index (INT32)
+			body = appendInt16(body, partitionResult.ErrorCode)                    // error_code (INT16)
 
 			body = appendInt64(body, 0) // high_watermark (INT64)
 			body = appendInt64(body, 0) // last_stable_offset (INT64)
