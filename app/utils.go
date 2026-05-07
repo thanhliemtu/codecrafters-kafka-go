@@ -57,3 +57,14 @@ func appendNullableBytesVarint(dst []byte, b []byte) []byte {
 	dst = append(dst, b...)
 	return dst
 }
+
+func appendCompactRecords(dst []byte, records []byte) []byte {
+	if records == nil {
+		// null records
+		return binary.AppendUvarint(dst, 0)
+	}
+
+	dst = binary.AppendUvarint(dst, uint64(len(records)+1))
+	dst = append(dst, records...)
+	return dst
+}

@@ -839,7 +839,23 @@ func handleFetch(
 
 			body = appendInt32(body, 0) // preferred_read_replica (INT32)
 
-			body = appendUvarint(body, 0) // COMPACT_RECORDS/COMPACT_NULLABLE_BYTES (nullable)
+			if partitionResult.ErrorCode == ERROR_NONE {
+				logPath := filepath.Join(
+					logDir,
+					fmt.Sprintf("%s-%d", topicResult.TopicName, partitionResult.PartitionData.PartitionIndex),
+					"00000000000000000000.log",
+				)
+
+				records, err := os.ReadFile(logPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "failed to read cluster metadata log: %v\n", err)
+					return nil, err
+				}
+
+				body = appendCompactRecords(body, records)
+			} else {
+				body = appendCompactRecords(body, nil) // COMPACT_RECORDS/COMPACT_NULLABLE_BYTES (nullable)
+			}
 
 			body = append(body, 0) // TAG_BUFFER (1 byte)
 		}
